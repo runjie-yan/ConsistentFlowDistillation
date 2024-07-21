@@ -187,6 +187,35 @@ class BaseImplicitGeometry(BaseGeometry):
             mesh = self._isosurface(self.bbox)
         return mesh
 
+class BaseImplicitGeometryGenerator(BaseImplicitGeometry):
+    @dataclass
+    class Config(BaseImplicitGeometry.Config):
+        pass
+
+    cfg: Config
+    
+    def regenerate(self, gen_id=None) -> None:
+        raise NotImplementedError
+
+    def forward(
+        self, points: Float[Tensor, "*N Di"], output_normal: bool = False
+    ) -> Dict[str, Float[Tensor, "..."]]:
+        raise NotImplementedError
+
+    def forward_field(
+        self, points: Float[Tensor, "*N Di"]
+    ) -> Tuple[Float[Tensor, "*N 1"], Optional[Float[Tensor, "*N 3"]]]:
+        # return the value of the implicit field, could be density / signed distance
+        # also return a deformation field if the grid vertices can be optimized
+        raise NotImplementedError
+
+    def forward_level(
+        self, field: Float[Tensor, "*N 1"], threshold: float
+    ) -> Float[Tensor, "*N 1"]:
+        # return the value of the implicit field, where the zero level set represents the surface
+        raise NotImplementedError
+
+
 
 class BaseExplicitGeometry(BaseGeometry):
     @dataclass

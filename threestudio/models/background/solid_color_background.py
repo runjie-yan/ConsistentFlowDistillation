@@ -26,17 +26,15 @@ class SolidColorBackground(BaseBackground):
         self.env_color: Float[Tensor, "Nc"]
         if self.cfg.learned:
             self.env_color = nn.Parameter(
-                torch.as_tensor(self.cfg.color, dtype=torch.float32)
+                torch.as_tensor(self.cfg.color, dtype=torch.float32, device=self.device)
             )
         else:
             self.register_buffer(
-                "env_color", torch.as_tensor(self.cfg.color, dtype=torch.float32)
+                "env_color", torch.as_tensor(self.cfg.color, dtype=torch.float32, device=self.device)
             )
 
     def forward(self, dirs: Float[Tensor, "B H W 3"]) -> Float[Tensor, "B H W Nc"]:
-        color = torch.ones(*dirs.shape[:-1], self.cfg.n_output_dims).to(
-            dirs
-        ) * self.env_color.to(dirs)
+        color = torch.ones(*dirs.shape[:-1], self.cfg.n_output_dims, device=self.device) * self.env_color
         if (
             self.training
             and self.cfg.random_aug
@@ -44,8 +42,7 @@ class SolidColorBackground(BaseBackground):
         ):
             # use random background color with probability random_aug_prob
             color = color * 0 + (  # prevent checking for unused parameters in DDP
-                torch.rand(dirs.shape[0], 1, 1, self.cfg.n_output_dims)
-                .to(dirs)
+                torch.rand(dirs.shape[0], 1, 1, self.cfg.n_output_dims, device=self.device)
                 .expand(*dirs.shape[:-1], -1)
             )
         return color

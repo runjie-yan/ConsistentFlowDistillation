@@ -134,9 +134,11 @@ class Zero123(BaseLift3DSystem):
                 )
         elif guidance == "zero123":
             # zero123
+            noise_out = self.noise_generator(out, batch)
             guidance_out = self.guidance(
                 out["comp_rgb"],
                 **batch,
+                **noise_out, 
                 rgb_as_latents=False,
                 guidance_eval=guidance_eval,
             )

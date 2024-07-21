@@ -25,6 +25,7 @@ class StableDiffusionGuidance(BaseObject):
         enable_attention_slicing: bool = False
         enable_channels_last_format: bool = False
         guidance_scale: float = 100.0
+        guidance_scale_img: float = 7.0
         grad_clip: Optional[
             Any
         ] = None  # field(default_factory=lambda: [0, 2.0, 8.0, 1000])
@@ -32,9 +33,12 @@ class StableDiffusionGuidance(BaseObject):
 
         min_step_percent: float = 0.02
         max_step_percent: float = 0.98
+        linear_anneal: bool = False
         sqrt_anneal: bool = False  # sqrt anneal proposed in HiFA: https://hifa-team.github.io/HiFA-site/
         trainer_max_steps: int = 25000
         use_img_loss: bool = False  # image-space SDS proposed in HiFA: https://hifa-team.github.io/HiFA-site/
+        use_db_img_loss: bool = False
+        use_tp_img_loss: bool = False
 
         use_sjc: bool = False
         var_red: bool = True
@@ -47,6 +51,7 @@ class StableDiffusionGuidance(BaseObject):
 
         """Maximum number of batch items to evaluate guidance for (for debugging) and to save on disk. -1 means save all items."""
         max_items_eval: int = 4
+        median_depress_val: Optional[float] = None
 
     cfg: Config
 
@@ -151,6 +156,7 @@ class StableDiffusionGuidance(BaseObject):
         encoder_hidden_states: Float[Tensor, "..."],
     ) -> Float[Tensor, "..."]:
         input_dtype = latents.dtype
+        print(latents.shape, t.shape, encoder_hidden_states.shape)
         return self.unet(
             latents.to(self.weights_dtype),
             t.to(self.weights_dtype),
@@ -159,12 +165,12 @@ class StableDiffusionGuidance(BaseObject):
 
     @torch.cuda.amp.autocast(enabled=False)
     def encode_images(
-        self, imgs: Float[Tensor, "B 3 512 512"]
+        self, imgs: Float[Tensor, "B 3 512 512"], generator=None
     ) -> Float[Tensor, "B 4 64 64"]:
         input_dtype = imgs.dtype
         imgs = imgs * 2.0 - 1.0
         posterior = self.vae.encode(imgs.to(self.weights_dtype)).latent_dist
-        latents = posterior.sample() * self.vae.config.scaling_factor
+        latents = posterior.sample(generator) * self.vae.config.scaling_factor
         return latents.to(input_dtype)
 
     @torch.cuda.amp.autocast(enabled=False)
@@ -192,6 +198,7 @@ class StableDiffusionGuidance(BaseObject):
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
+        noise: Float[Tensor, "B 4 64 64"]=None,
     ):
         batch_size = elevation.shape[0]
 
@@ -203,7 +210,8 @@ class StableDiffusionGuidance(BaseObject):
                 elevation, azimuth, camera_distances, self.cfg.view_dependent_prompting
             )
             with torch.no_grad():
-                noise = torch.randn_like(latents)
+                if noise is None:
+                    noise = torch.randn_like(latents)  # TODO: use torch generator
                 latents_noisy = self.scheduler.add_noise(latents, noise, t)
                 latent_model_input = torch.cat([latents_noisy] * 4, dim=0)
                 noise_pred = self.forward_unet(
@@ -236,7 +244,8 @@ class StableDiffusionGuidance(BaseObject):
             # predict the noise residual with unet, NO grad!
             with torch.no_grad():
                 # add noise
-                noise = torch.randn_like(latents)  # TODO: use torch generator
+                if noise is None:
+                    noise = torch.randn_like(latents)  # TODO: use torch generator
                 latents_noisy = self.scheduler.add_noise(latents, noise, t)
                 # pred noise
                 latent_model_input = torch.cat([latents_noisy] * 2, dim=0)
@@ -251,28 +260,30 @@ class StableDiffusionGuidance(BaseObject):
             noise_pred = noise_pred_text + self.cfg.guidance_scale * (
                 noise_pred_text - noise_pred_uncond
             )
-
-        if self.cfg.weighting_strategy == "sds":
-            # w(t), sigma_t^2
-            w = (1 - self.alphas[t]).view(-1, 1, 1, 1)
-        elif self.cfg.weighting_strategy == "uniform":
-            w = 1
-        elif self.cfg.weighting_strategy == "fantasia3d":
-            w = (self.alphas[t] ** 0.5 * (1 - self.alphas[t])).view(-1, 1, 1, 1)
-        else:
-            raise ValueError(
-                f"Unknown weighting strategy: {self.cfg.weighting_strategy}"
+            noise_pred_img = noise_pred_text + self.cfg.guidance_scale_img * (
+                noise_pred_text - noise_pred_uncond
             )
 
         alpha = (self.alphas[t] ** 0.5).view(-1, 1, 1, 1)
         sigma = ((1 - self.alphas[t]) ** 0.5).view(-1, 1, 1, 1)
-        latents_denoised = (latents_noisy - sigma * noise_pred) / alpha
-        image_denoised = self.decode_latents(latents_denoised)
+        latents_denoised = (latents_noisy - sigma * noise_pred_img) / alpha
+        latents_denoised_text = (latents_noisy - sigma * noise_pred_text) / alpha
+        latents_denoised_uncond = (latents_noisy - sigma * noise_pred_uncond) / alpha
 
-        grad = w * (noise_pred - noise)
+        grad = noise_pred - noise
+        with torch.no_grad():
+            if self.cfg.use_tp_img_loss:
+                dec_batch = torch.cat([latents, latents_denoised_text, latents_denoised_uncond], dim=0)
+                image, image_denoised_text, image_denoised_uncond = self.decode_latents(dec_batch).chunk(3)
+                image_denoised = image_denoised_text + self.cfg.guidance_scale_img * (image_denoised_text - image_denoised_uncond)
+            elif self.cfg.use_db_img_loss:
+                dec_batch = torch.cat([latents, latents_denoised], dim=0)
+                image, image_denoised = self.decode_latents(dec_batch).chunk(2)
+            else:
+                image_denoised = self.decode_latents(latents_denoised)
         # image-space SDS proposed in HiFA: https://hifa-team.github.io/HiFA-site/
-        if self.cfg.use_img_loss:
-            grad_img = w * (image - image_denoised) * alpha / sigma
+        if self.cfg.use_img_loss or self.cfg.use_db_img_loss or self.cfg.use_tp_img_loss:
+            grad_img = (image - image_denoised) * alpha / sigma
         else:
             grad_img = None
 
@@ -282,7 +293,7 @@ class StableDiffusionGuidance(BaseObject):
             "text_embeddings": text_embeddings,
             "t_orig": t,
             "latents_noisy": latents_noisy,
-            "noise_pred": noise_pred,
+            "noise_pred": noise_pred_img,
         }
 
         return grad, grad_img, guidance_eval_utils
@@ -392,6 +403,9 @@ class StableDiffusionGuidance(BaseObject):
         camera_distances: Float[Tensor, "B"],
         rgb_as_latents=False,
         guidance_eval=False,
+        noise: Optional[Float[Tensor, "B 4 64 64"]]=None,
+        encode_generator: Optional[torch.Generator]=None,
+        jac_mtx: Optional[Float[Tensor, "B 4 64 64 4 64 64"]]=None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
@@ -407,7 +421,7 @@ class StableDiffusionGuidance(BaseObject):
             )
         else:
             # encode image into latents with vae
-            latents = self.encode_images(rgb_BCHW_512)
+            latents = self.encode_images(rgb_BCHW_512, encode_generator)
 
         # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
         t = torch.randint(
@@ -432,6 +446,7 @@ class StableDiffusionGuidance(BaseObject):
                 elevation,
                 azimuth,
                 camera_distances,
+                noise,
             )
 
         grad = torch.nan_to_num(grad)
@@ -439,29 +454,46 @@ class StableDiffusionGuidance(BaseObject):
         # clip grad for stable training?
         if self.grad_clip_val is not None:
             grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)
+        
+        # depress small grad for stable training?
+        if self.cfg.median_depress_val is not None:
+            depress_mask = grad.abs()<self.cfg.median_depress_val*grad.abs().median()
+            grad[depress_mask] = grad[depress_mask]*0.
+            
+        if jac_mtx is not None:
+            grad = (jac_mtx * grad[:,None,None,None,...]).sum((-1,-2,-3))
 
         # loss = SpecifyGradient.apply(latents, grad)
         # SpecifyGradient is not straghtforward, use a reparameterization trick instead
         target = (latents - grad).detach()
         # d(loss)/d(latents) = latents - target = latents - (latents - grad) = grad
-        loss_sds = 0.5 * F.mse_loss(latents, target, reduction="sum") / batch_size
+        loss_sds = 0.5 * F.mse_loss(latents, target, reduction="sum")
+        loss_sds = loss_sds
 
         guidance_out = {
             "loss_sds": loss_sds,
             "grad_norm": grad.norm(),
             "min_step": self.min_step,
             "max_step": self.max_step,
+            "guidance_scale": self.cfg.guidance_scale,
+            "guidance_scale_img": self.cfg.guidance_scale_img,
+            "latents": latents,
+            "target_latents": target, 
+            "grad": grad, # for image loss test exp
         }
 
-        if self.cfg.use_img_loss:
+        if self.cfg.use_img_loss or self.cfg.use_db_img_loss or self.cfg.use_tp_img_loss :
             grad_img = torch.nan_to_num(grad_img)
             if self.grad_clip_val is not None:
                 grad_img = grad_img.clamp(-self.grad_clip_val, self.grad_clip_val)
             target_img = (rgb_BCHW_512 - grad_img).detach()
             loss_sds_img = (
-                0.5 * F.mse_loss(rgb_BCHW_512, target_img, reduction="sum") / batch_size
+                0.5 * F.mse_loss(rgb_BCHW_512, target_img, reduction="sum")
             )
-            guidance_out["loss_sds_img"] = loss_sds_img
+            guidance_out.update({
+                "loss_sds_img": loss_sds_img,
+                "target_img": target_img,
+            })
 
         if guidance_eval:
             guidance_eval_out = self.guidance_eval(**guidance_eval_utils)
@@ -540,9 +572,10 @@ class StableDiffusionGuidance(BaseObject):
         noise_pred,
         use_perp_neg=False,
         neg_guidance_weights=None,
+        **kwarge,
     ):
         # use only 50 timesteps, and find nearest of those to t
-        self.scheduler.set_timesteps(50)
+        self.scheduler.set_timesteps(1)
         self.scheduler.timesteps_gpu = self.scheduler.timesteps.to(self.device)
         bs = (
             min(self.cfg.max_items_eval, latents_noisy.shape[0])
@@ -565,7 +598,7 @@ class StableDiffusionGuidance(BaseObject):
         pred_1orig = []
         for b in range(bs):
             step_output = self.scheduler.step(
-                noise_pred[b : b + 1], t[b], latents_noisy[b : b + 1], eta=1
+                noise_pred[b : b + 1], t_orig[b], latents_noisy[b : b + 1], eta=1
             )
             latents_1step.append(step_output["prev_sample"])
             pred_1orig.append(step_output["pred_original_sample"])
@@ -614,8 +647,22 @@ class StableDiffusionGuidance(BaseObject):
         # http://arxiv.org/abs/2303.15413
         if self.cfg.grad_clip is not None:
             self.grad_clip_val = C(self.cfg.grad_clip, epoch, global_step)
-
-        if self.cfg.sqrt_anneal:
+        if self.cfg.linear_anneal:
+            percentage = (
+                float(global_step) / self.cfg.trainer_max_steps
+            )  # progress percentage
+            if type(self.cfg.max_step_percent) not in [float, int]:
+                max_step_percent = self.cfg.max_step_percent[1]
+            else:
+                max_step_percent = self.cfg.max_step_percent
+            curr_percent = (
+                max_step_percent - C(self.cfg.min_step_percent, epoch, global_step)
+            ) * (1 - percentage) + C(self.cfg.min_step_percent, epoch, global_step)
+            self.set_min_max_steps(
+                min_step_percent=curr_percent,
+                max_step_percent=curr_percent,
+            )
+        elif self.cfg.sqrt_anneal:
             percentage = (
                 float(global_step) / self.cfg.trainer_max_steps
             ) ** 0.5  # progress percentage

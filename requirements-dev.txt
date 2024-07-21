@@ -1,4 +1,0 @@
-black
-mypy
-pylint
-pre-commit

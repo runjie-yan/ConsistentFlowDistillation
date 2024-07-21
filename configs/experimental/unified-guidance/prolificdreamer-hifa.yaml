@@ -73,7 +73,7 @@ system:
     max_step_percent: 0.98
     vsd_phi_model_name_or_path: "stabilityai/stable-diffusion-2-1"
     sqrt_anneal: true
-    use_img_loss: true
+    use_img_loss: gt
 
   loggers:
     wandb:
@@ -108,7 +108,7 @@ system:
 
 trainer:
   max_steps: 25000
-  log_every_n_steps: 1
+  log_every_n_steps: 20
   num_sanity_val_steps: 0
   val_check_interval: 200
   enable_progress_bar: true

@@ -459,6 +459,7 @@ class StableDiffusionVSDGuidance(BaseModule):
         text_embeddings_vd: Float[Tensor, "BB 77 768"],
         text_embeddings: Float[Tensor, "BB 77 768"],
         camera_condition: Float[Tensor, "B 4 4"],
+        noise: Float[Tensor, "B 4 64 64"]=None,
     ):
         B = latents.shape[0]
 
@@ -473,7 +474,8 @@ class StableDiffusionVSDGuidance(BaseModule):
             )
 
             # add noise
-            noise = torch.randn_like(latents)
+            if noise is None:
+                noise = torch.randn_like(latents)  # TODO: use torch generator
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2, dim=0)
@@ -601,7 +603,7 @@ class StableDiffusionVSDGuidance(BaseModule):
             ),
             cross_attention_kwargs={"scale": 1.0},
         )
-        return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+        return F.mse_loss(noise_pred.float(), target.float(), reduction="sum")
 
     def get_latents(
         self, rgb_BCHW: Float[Tensor, "B C H W"], rgb_as_latents=False
@@ -628,6 +630,7 @@ class StableDiffusionVSDGuidance(BaseModule):
         mvp_mtx: Float[Tensor, "B 4 4"],
         c2w: Float[Tensor, "B 4 4"],
         rgb_as_latents=False,
+        noise: Optional[Float[Tensor, "B 4 64 64"]]=None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
@@ -660,7 +663,7 @@ class StableDiffusionVSDGuidance(BaseModule):
             )
 
         grad, grad_img = self.compute_grad_vsd(
-            latents, text_embeddings_vd, text_embeddings, camera_condition
+            latents, text_embeddings_vd, text_embeddings, camera_condition, noise,
         )
 
         grad = torch.nan_to_num(grad)

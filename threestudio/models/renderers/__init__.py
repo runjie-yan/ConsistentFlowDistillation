@@ -6,4 +6,5 @@ from . import (
     neus_volume_renderer,
     nvdiff_rasterizer,
     patch_renderer,
+    nerf_volume_renderer_with_budget,
 )

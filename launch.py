@@ -215,8 +215,8 @@ def main(args, extras) -> None:
             lambda: os.makedirs(os.path.join(cfg.trial_dir, "tb_logs"), exist_ok=True)
         )()
         loggers += [
-            TensorBoardLogger(cfg.trial_dir, name="tb_logs"),
-            CSVLogger(cfg.trial_dir, name="csv_logs"),
+            TensorBoardLogger(save_dir=cfg.trial_dir, name="tb_logs"),
+            CSVLogger(save_dir=cfg.trial_dir, name="csv_logs"),
         ] + system.get_loggers()
         rank_zero_only(
             lambda: write_to_text(

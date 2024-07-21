@@ -13,7 +13,7 @@ from threestudio.models.materials.base import BaseMaterial
 from threestudio.models.networks import create_network_with_input_encoding
 from threestudio.models.renderers.base import VolumeRenderer
 from threestudio.systems.utils import parse_optimizer, parse_scheduler_to_instance
-from threestudio.utils.ops import chunk_batch, get_activation, validate_empty_rays
+from threestudio.utils.ops import chunk_batch, get_activation, validate_empty_rays, chunk_batch_seq
 from threestudio.utils.typing import *
 
 
@@ -23,6 +23,7 @@ class NeRFVolumeRenderer(VolumeRenderer):
     class Config(VolumeRenderer.Config):
         num_samples_per_ray: int = 512
         eval_chunk_size: int = 160000
+        train_chunk_num: int = 0 # set >0 to enable checkpointing
         randomized: bool = True
 
         near_plane: float = 0.0
@@ -156,14 +157,11 @@ class NeRFVolumeRenderer(VolumeRenderer):
                     t_positions = (t_starts + t_ends) / 2.0
                     t_dirs = rays_d_flatten[ray_indices]
                     positions = t_origins + t_dirs * t_positions
-                    if self.training:
-                        sigma = self.geometry.forward_density(positions)[..., 0]
-                    else:
-                        sigma = chunk_batch(
-                            self.geometry.forward_density,
-                            self.cfg.eval_chunk_size,
-                            positions,
-                        )[..., 0]
+                    sigma = chunk_batch(
+                        self.geometry.forward_density,
+                        self.cfg.eval_chunk_size,
+                        positions,
+                    )[..., 0]
                     return sigma
 
                 with torch.no_grad():
@@ -279,17 +277,38 @@ class NeRFVolumeRenderer(VolumeRenderer):
         t_intervals = t_ends - t_starts
 
         if self.training:
-            geo_out = self.geometry(
-                positions, output_normal=self.material.requires_normal
-            )
-            rgb_fg_all = self.material(
-                viewdirs=t_dirs,
-                positions=positions,
-                light_positions=t_light_positions,
-                **geo_out,
-                **kwargs
-            )
-            comp_rgb_bg = self.background(dirs=rays_d)
+            if self.cfg.train_chunk_num > 0:
+                chunk_num = positions.shape[0] // self.cfg.train_chunk_num + 1
+                geo_out = chunk_batch_seq(
+                    self.geometry,
+                    chunk_num,
+                    positions,
+                    output_normal=self.material.requires_normal,
+                )
+                rgb_fg_all = chunk_batch_seq(
+                    self.material,
+                    chunk_num,
+                    viewdirs=t_dirs,
+                    positions=positions,
+                    light_positions=t_light_positions,
+                    **geo_out,
+                    **kwargs
+                )
+                comp_rgb_bg = chunk_batch_seq(
+                    self.background, chunk_num, dirs=rays_d
+                )
+            else:
+                geo_out = self.geometry(
+                    positions, output_normal=self.material.requires_normal
+                )
+                rgb_fg_all = self.material(
+                    viewdirs=t_dirs,
+                    positions=positions,
+                    light_positions=t_light_positions,
+                    **geo_out,
+                    **kwargs
+                )
+                comp_rgb_bg = self.background(dirs=rays_d)
         else:
             geo_out = chunk_batch(
                 self.geometry,
@@ -369,6 +388,7 @@ class NeRFVolumeRenderer(VolumeRenderer):
             "comp_rgb_bg": comp_rgb_bg.view(batch_size, height, width, -1),
             "opacity": opacity.view(batch_size, height, width, 1),
             "depth": depth.view(batch_size, height, width, 1),
+            "z_mean": z_mean.view(batch_size, height, width, 1),
             "z_variance": z_variance.view(batch_size, height, width, 1),
         }
 

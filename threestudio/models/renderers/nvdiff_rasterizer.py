@@ -62,6 +62,13 @@ class NVDiffRasterizer(Rasterizer):
             gb_normal_aa, rast, v_pos_clip, mesh.t_pos_idx
         )
         out.update({"comp_normal": gb_normal_aa})  # in [0, 1]
+        
+        depth = v_pos_clip[0, ..., 2:3].contiguous()
+        depth_interpolated, _ = self.ctx.interpolate_one(depth, rast, mesh.t_pos_idx)
+        depth_aa = self.ctx.antialias(depth_interpolated, rast, v_pos_clip, mesh.t_pos_idx)
+
+        # Update the output dictionary with depth information
+        out.update({"depth": depth_aa, "z_mean": depth_aa})  # Depth values
 
         # TODO: make it clear whether to compute the normal, now we compute it in all cases
         # consider using: require_normal_computation = render_normal or (render_rgb and material.requires_normal)

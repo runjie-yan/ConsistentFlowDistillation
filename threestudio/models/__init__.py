@@ -6,4 +6,7 @@ from . import (
     materials,
     prompt_processors,
     renderers,
+    noise_generator,
+    t_scheduler,
+    imgenerator,
 )

@@ -12,4 +12,8 @@ from . import (
     textmesh,
     zero123,
     zero123_simple,
+    dreamfusion_multi,
+    distillation2d,
+    reconstruction,
+    mvdream,
 )

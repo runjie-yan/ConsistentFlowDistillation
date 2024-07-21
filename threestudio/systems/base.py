@@ -22,6 +22,15 @@ from threestudio.utils.misc import (
 )
 from threestudio.utils.saving import SaverMixin
 from threestudio.utils.typing import *
+from threestudio.models.imgenerator.base import BaseImgenerator
+from threestudio.models.prompt_processors.base import PromptProcessor
+from threestudio.models.background.base import BaseBackground
+from threestudio.models.geometry.base import BaseGeometry
+from threestudio.models.materials.base import BaseMaterial
+from threestudio.models.renderers.base import Renderer
+from threestudio.models.noise_generator import NoiseGenerator
+from threestudio.models.guidance.stable_diffusion_unified_guidance import StableDiffusionUnifiedGuidance
+from threestudio.models.t_scheduler import TimestepScheduler
 
 
 class BaseSystem(pl.LightningModule, Updateable, SaverMixin):
@@ -213,7 +222,48 @@ class BaseSystem(pl.LightningModule, Updateable, SaverMixin):
         """
         pass
 
+class BaseDistill2DSystem(BaseSystem):
+    @dataclass
+    class Config(BaseSystem.Config):
+        imgenerator_type: str = ''
+        imgenerator: dict = field(default_factory=dict)
+        
+        guidance_type: str = ""
+        guidance: dict = field(default_factory=dict)
 
+        prompt_processor_type: str = ""
+        prompt_processor: dict = field(default_factory=dict)
+
+        noise_generator_type: str = "noise-generator"
+        noise_generator: dict = field(default_factory=dict)
+        
+        t_scheduler_type: str = "timestep-scheduler"
+        t_scheduler: dict = field(default_factory=dict)
+        
+    cfg: Config
+    imgenerator: BaseImgenerator
+    guidance: StableDiffusionUnifiedGuidance
+    prompt_processor: PromptProcessor
+    noise_generator: NoiseGenerator
+    t_scheduler: TimestepScheduler
+    
+    def configure(self) -> None:
+        self.imgenerator = threestudio.find(self.cfg.imgenerator_type)(self.cfg.imgenerator)
+        self.noise_generator = threestudio.find(self.cfg.noise_generator_type)(self.cfg.noise_generator)
+        self.t_scheduler = threestudio.find(self.cfg.t_scheduler_type)(self.cfg.t_scheduler)
+        
+    def on_fit_start(self) -> None:
+        if self._save_dir is not None:
+            threestudio.info(f"Validation results will be saved to {self._save_dir}")
+        else:
+            threestudio.warn(
+                f"Saving directory not set for the system, visualization results will not be saved"
+            )
+
+    def on_test_end(self) -> None:
+        if self._save_dir is not None:
+            threestudio.info(f"Test results saved to {self._save_dir}")
+    
 class BaseLift3DSystem(BaseSystem):
     @dataclass
     class Config(BaseSystem.Config):
@@ -243,6 +293,12 @@ class BaseLift3DSystem(BaseSystem):
         # geometry export configurations, no need to specify in training
         exporter_type: str = "mesh-exporter"
         exporter: dict = field(default_factory=dict)
+        
+        noise_generator_type: str = "noise-generator"
+        noise_generator: dict = field(default_factory=dict)
+        
+        t_scheduler_type: str = "timestep-scheduler"
+        t_scheduler: dict = field(default_factory=dict)
 
     cfg: Config
 
@@ -301,6 +357,18 @@ class BaseLift3DSystem(BaseSystem):
             material=self.material,
             background=self.background,
         )
+        self.noise_generator = threestudio.find(self.cfg.noise_generator_type)(self.cfg.noise_generator)
+        self.t_scheduler = threestudio.find(self.cfg.t_scheduler_type)(self.cfg.t_scheduler)
+        
+    cfg: Config
+    guidance: StableDiffusionUnifiedGuidance
+    prompt_processor: PromptProcessor
+    noise_generator: NoiseGenerator
+    t_scheduler: TimestepScheduler
+    background: BaseBackground
+    geometry: BaseGeometry
+    material: BaseMaterial
+    renderer: Renderer
 
     def on_fit_start(self) -> None:
         if self._save_dir is not None:

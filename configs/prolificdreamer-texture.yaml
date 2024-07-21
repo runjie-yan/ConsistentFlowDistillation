@@ -1,5 +1,5 @@
-name: "prolificdreamer-texture"
-tag: "${rmspace:${system.prompt_processor.prompt},_}"
+name: "prolificdreamer-texture-org"
+tag: "anneal-${rmspace:${system.prompt_processor.prompt},_}"
 exp_root_dir: "outputs"
 seed: 0
 
@@ -9,18 +9,17 @@ data:
   width: 512
   height: 512
   camera_distance_range: [1.0, 1.5]
-  fovy_range: [40, 70]
-  elevation_range: [-10, 45]
-  camera_perturb: 0.
-  center_perturb: 0.
-  up_perturb: 0.
+  fovy_range: [55, 70]
+  elevation_range: [0, 45]
   eval_camera_distance: 1.5
-  eval_fovy_deg: 70.
+  eval_fovy_deg: 65.
+  n_val_views: 4
 
 system_type: "prolificdreamer-system"
 system:
   stage: texture
   geometry_convert_from: ???
+  geometry_convert_inherit_texture: true
   geometry_type: "tetrahedra-sdf-grid"
   geometry:
     radius: 1.0 # consistent with last stage
@@ -31,7 +30,7 @@ system:
       otype: HashGrid
       n_levels: 16
       n_features_per_level: 2
-      log2_hashmap_size: 19
+      log2_hashmap_size: 20
       base_resolution: 16
       per_level_scale: 1.447269237440378 # max resolution 4096
     fix_geometry: true
@@ -47,7 +46,40 @@ system:
 
   renderer_type: "nvdiff-rasterizer"
   renderer:
-    context_type: gl
+    context_type: cuda
+
+  noise_generator_type: "triplane-noise-generator"
+  noise_generator:
+    # 0(random)-1(determined)
+    sqrt_beta: 0.
+    noise_h: 64
+    noise_w: 64
+    noise_background_fix: true
+
+    noise_ptc_resolution: 2048
+    peel_depth: 8
+    separate: false
+    apply_transformation: sph2sqr
+    context_type: cuda
+
+    smooth_regularization: true
+    smooth_kernel_size: 1
+
+  t_scheduler_type: timestep-scheduler
+  t_scheduler:
+    min_step_percent: 0.02
+    max_step_percent: [5000, 0.98, 0.5, 5001] # annealed to 0.5 after 5000 steps
+    sqrt_anneal: false
+    dreamtime_anneal: null
+    trainer_max_steps: ${trainer.max_steps}
+
+  # t_scheduler_type: timestep-scheduler
+  # t_scheduler:
+  #   min_step_percent: 0.02
+  #   max_step_percent: 0.98
+  #   sqrt_anneal: false
+  #   dreamtime_anneal: [700,400,100,200]
+  #   trainer_max_steps: ${trainer.max_steps}
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
@@ -56,23 +88,32 @@ system:
     front_threshold: 30.
     back_threshold: 30.
 
-  guidance_type: "stable-diffusion-vsd-guidance"
+  guidance_type: "stable-diffusion-unified-guidance"
   guidance:
+    guidance_type: vsd
+    guidance_stab_type: null
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    pretrained_model_name_or_path_lora: "stabilityai/stable-diffusion-2-1"
+    vsd_phi_model_name_or_path: "stabilityai/stable-diffusion-2-1"
     guidance_scale: 7.5
-    min_step_percent: 0.02
-    max_step_percent: [5000, 0.98, 0.5, 5001] # annealed to 0.5 after 5000 steps
+    use_img_loss: null
 
   loggers:
     wandb:
       enable: false
-      project: "threestudio"
-      name: None
+      project: ${name}
+      name: ${tag}
 
   loss:
-    lambda_vsd: 1.
-    lambda_lora: 1.
+    lambda_sd: 1.
+    lambda_sd_img: 1e-1
+    lambda_train_phi: 1.
+    lambda_normal_smooth: 0.
+    lambda_3d_normal_smooth: 0.
+    lambda_orient: 0.
+    lambda_sparsity: 0.
+    lambda_opaque: 0.
+    lambda_z_variance: 0.
+
   optimizer:
     name: AdamW
     args:
@@ -90,7 +131,7 @@ system:
 
 trainer:
   max_steps: 30000
-  log_every_n_steps: 1
+  log_every_n_steps: 20
   num_sanity_val_steps: 1
   val_check_interval: 200
   enable_progress_bar: true

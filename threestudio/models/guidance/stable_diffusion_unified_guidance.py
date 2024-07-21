@@ -9,6 +9,7 @@ from diffusers import (
     AutoencoderKL,
     ControlNetModel,
     DDPMScheduler,
+    DDIMScheduler,
     DPMSolverSinglestepScheduler,
     StableDiffusionPipeline,
     UNet2DConditionModel,
@@ -34,14 +35,22 @@ class StableDiffusionUnifiedGuidance(BaseModule):
     class Config(BaseModule.Config):
         # guidance type, in ["sds", "vsd"]
         guidance_type: str = "sds"
+        consistency_training: bool = False
+        ct_weighting_strategy: Any = None
 
         pretrained_model_name_or_path: str = "runwayml/stable-diffusion-v1-5"
-        guidance_scale: float = 100.0
-        weighting_strategy: str = "dreamfusion"
+        guidance_scale: Any = 100.0
+        # None to use encode decode regulization
+        guidance_scale_img: Any = 7.0
+        # guidance type, in [None, "ssd", "cfg"]
+        # FIXME: consider batch > 1
+        guidance_stab_type: Optional[str] = None
+        # weighting strategy in DMD https://arxiv.org/pdf/2311.18828.pdf
+        weighting_strategy: str = "dmd"
         view_dependent_prompting: bool = True
 
-        min_step_percent: Any = 0.02
-        max_step_percent: Any = 0.98
+        # min_step_percent: Any = 0.02
+        # max_step_percent: Any = 0.98
         grad_clip: Optional[Any] = None
 
         return_rgb_1step_orig: bool = False
@@ -78,17 +87,22 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         vsd_camera_condition_type: Optional[str] = "extrinsics"
 
         # HiFA configurations: https://hifa-team.github.io/HiFA-site/
-        sqrt_anneal: bool = (
-            False  # requires setting min_step_percent=0.3 to work properly
-        )
-        trainer_max_steps: int = 25000
-        use_img_loss: bool = True  # works with most cases
+        # sqrt_anneal: bool = (
+        #     False  # requires setting min_step_percent=0.3 to work properly
+        # )
+        # trainer_max_steps: int = 25000
+        use_img_loss: Optional[str] = None  # works with most cases
+        reduction: str = 'l2' # TODO: choose l1?
+        
+        sds_guidance_scale: float = 0.
+        
+        vsd_blur: int = 0
 
     cfg: Config
 
     def configure(self) -> None:
-        self.min_step: Optional[int] = None
-        self.max_step: Optional[int] = None
+        # self.min_step: Optional[int] = None
+        # self.max_step: Optional[int] = None
         self.grad_clip_val: Optional[float] = None
 
         @dataclass
@@ -188,6 +202,15 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 self.lora_layers._load_state_dict_pre_hooks.clear()
                 self.lora_layers._state_dict_hooks.clear()
 
+        if self.cfg.reduction == 'l1':
+            self.loss_fn = nn.L1Loss(reduction="sum")
+        elif self.cfg.reduction == 'l2':
+            self.loss_fn = nn.MSELoss(reduction="sum")
+        elif self.cfg.reduction == 'l15':
+            self.loss_fn = lambda x, y: torch.sum(torch.abs(x - y) ** 1.5)
+        else:
+            raise ValueError
+
         threestudio.info(f"Loaded Stable Diffusion!")
 
         # controlnet
@@ -204,7 +227,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
 
             threestudio.info(f"Loaded ControlNet!")
 
-        self.scheduler = DDPMScheduler.from_config(pipe.scheduler.config)
+        self.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
         self.num_train_timesteps = self.scheduler.config.num_train_timesteps
 
         # q(z_t|x) = N(alpha_t x, sigma_t^2 I)
@@ -222,6 +245,8 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             pipe_phi=pipe_phi,
             controlnet=controlnet,
         )
+        
+        self.w_factor = 1.0
 
     @property
     def pipe(self) -> StableDiffusionPipeline:
@@ -360,6 +385,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
+        noise: Float[Tensor, "B 4 Hl Wl"],
     ) -> Float[Tensor, "B 4 Hl Wl"]:
         batch_size = latents_noisy.shape[0]
 
@@ -397,7 +423,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                     -1, 1, 1, 1
                 ) * perpendicular_component(e_i_neg, e_pos)
 
-            noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (
+            noise_pred = noise_pred_uncond + self.guidance_scale * (
                 e_pos + accum_grad
             )
         else:
@@ -419,11 +445,15 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                     )
 
             noise_pred_text, noise_pred_uncond = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + self.cfg.guidance_scale * (
-                noise_pred_text - noise_pred_uncond
-            )
+            cfg_direction = noise_pred_text - noise_pred_uncond
+            noise_pred = noise_pred_text + self.guidance_scale * cfg_direction
+            noise_pred_img = noise_pred_text + self.guidance_scale_img * cfg_direction
 
-        return noise_pred
+            pretrain_pred_utils = {
+                "noise_pred_text": noise_pred_text,
+                "noise_pred_uncond": noise_pred_uncond,
+            }
+        return noise_pred, noise_pred_img, pretrain_pred_utils
 
     def get_eps_phi(
         self,
@@ -478,6 +508,11 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         camera_condition: Float[Tensor, "B ..."],
     ):
         B = latents.shape[0]
+        if self.cfg.vsd_blur > 0:
+            pad_size = self.cfg.vsd_blur//2
+            kernel_size = pad_size*2+1
+            smooth_pool = nn.AvgPool2d(kernel_size, stride=1, padding=pad_size)
+            latents = smooth_pool(latents)
         latents = latents.detach().repeat(
             self.cfg.vsd_lora_n_timestamp_samples, 1, 1, 1
         )
@@ -531,63 +566,67 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
     def forward(
-        self,
-        rgb: Float[Tensor, "B H W C"],
+        self, rgb,
         prompt_utils: PromptProcessorOutput,
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
         mvp_mtx: Float[Tensor, "B 4 4"],
         c2w: Float[Tensor, "B 4 4"],
+        t_perc_ref: Float[Tensor, "B"],
         rgb_as_latents=False,
+        noise: Float[Tensor, "NB 4 64 64"]=None,
+        return_rgb_1step_orig: bool=False,
+        return_rgb_multistep_orig: bool=False,
+        t_perc_tgt: Optional[Float[Tensor, "B"]]=None,
         **kwargs,
     ):
-        batch_size = rgb.shape[0]
-
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
-        latents: Float[Tensor, "B 4 Hl Wl"]
-        rgb_BCHW_512 = F.interpolate(
-            rgb_BCHW, (512, 512), mode="bilinear", align_corners=False
-        )
         if rgb_as_latents:
             # treat input rgb as latents
             # input rgb should be in range [-1, 1]
             latents = F.interpolate(
                 rgb_BCHW, (64, 64), mode="bilinear", align_corners=False
             )
+            rgb_BCHW_512 = None
+            rgb_ref_BCHW_512 = None
+            with torch.no_grad():
+                latents_ref = latents.detach()
         else:
+            rgb_BCHW_512 = F.interpolate(
+                rgb_BCHW, (512, 512), mode="bilinear", align_corners=False
+            )
             # treat input rgb as rgb
             # input rgb should be in range [0, 1]
             # encode image into latents with vae
             latents = self.vae_encode(self.pipe.vae, rgb_BCHW_512 * 2.0 - 1.0)
+            with torch.no_grad():
+                rgb_ref_BCHW_512 = rgb_BCHW_512.detach()
+                latents_ref = latents.detach()
+        
+        batch_size = latents.shape[0]
+        latents: Float[Tensor, "B 4 Hl Wl"]
+        latents_ref: Float[Tensor, "B 4 Hl Wl"]
 
         # sample timestep
         # use the same timestep for each batch
-        assert self.min_step is not None and self.max_step is not None
-        t = torch.randint(
-            self.min_step,
-            self.max_step + 1,
-            [1],
-            dtype=torch.long,
-            device=self.device,
-        ).repeat(batch_size)
+        if self.cfg.consistency_training:
+            assert t_perc_tgt is not None
 
-        # sample noise
-        noise = torch.randn_like(latents)
-        latents_noisy = self.scheduler.add_noise(latents, noise, t)
+        t_ref = torch.round(self.num_train_timesteps*t_perc_ref).to(dtype=torch.long,device=self.device)
+        if t_perc_tgt is not None:
+            t_tgt = torch.round(self.num_train_timesteps*t_perc_tgt).to(dtype=torch.long,device=self.device)
+        
+        latents_noisy = self.scheduler.add_noise(latents_ref, noise, t_ref)
 
-        eps_pretrain = self.get_eps_pretrain(
-            latents_noisy, t, prompt_utils, elevation, azimuth, camera_distances
+        eps_pretrain, eps_pretrain_img, pretrain_pred_utils = self.get_eps_pretrain(
+            latents_noisy, t_ref, prompt_utils, elevation, azimuth, camera_distances, noise=noise
         )
 
-        latents_1step_orig = (
-            1
-            / self.alphas[t].view(-1, 1, 1, 1)
-            * (latents_noisy - self.sigmas[t].view(-1, 1, 1, 1) * eps_pretrain)
-        ).detach()
-
-        if self.cfg.guidance_type == "sds":
+        if self.cfg.guidance_type in "sds":
             eps_phi = noise
+            if self.guidance_scale > 100.1:
+                eps_phi = pretrain_pred_utils['noise_pred_uncond']
         elif self.cfg.guidance_type == "vsd":
             if self.cfg.vsd_camera_condition_type == "extrinsics":
                 camera_condition = c2w
@@ -607,9 +646,12 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 raise ValueError(
                     f"Unknown camera_condition_type {self.cfg.vsd_camera_condition_type}"
                 )
+                
+            latents_noisy_vsd = latents_noisy
+                
             eps_phi = self.get_eps_phi(
-                latents_noisy,
-                t,
+                latents_noisy_vsd,
+                t_ref,
                 prompt_utils,
                 elevation,
                 azimuth,
@@ -618,7 +660,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             )
 
             loss_train_phi = self.train_phi(
-                latents,
+                latents, # FIXME: ref or org?
                 prompt_utils,
                 elevation,
                 azimuth,
@@ -626,12 +668,19 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 camera_condition,
             )
 
-        if self.cfg.weighting_strategy == "dreamfusion":
-            w = (1.0 - self.alphas[t]).view(-1, 1, 1, 1)
+        if self.cfg.consistency_training:
+            if self.cfg.ct_weighting_strategy == "gt":
+                w = self.lambdas[t_ref].view(-1, 1, 1, 1)
+            else:
+                w = ((self.lambdas[t_ref]-self.lambdas[t_tgt])*self.w_factor).view(-1, 1, 1, 1)
+        elif self.cfg.weighting_strategy == "dmd":
+            w = 1.0 / (1e-8+(eps_pretrain-noise).abs().mean(dim=[1,2,3], keepdim=True))
+        elif self.cfg.weighting_strategy == "dreamfusion":
+            w = (1.0 - self.alphas[t_ref]).view(-1, 1, 1, 1)
         elif self.cfg.weighting_strategy == "uniform":
             w = 1.0
         elif self.cfg.weighting_strategy == "fantasia3d":
-            w = (self.alphas[t] ** 0.5 * (1 - self.alphas[t])).view(-1, 1, 1, 1)
+            w = (self.alphas[t_ref] ** 0.5 * (1 - self.alphas[t_ref])).view(-1, 1, 1, 1)
         else:
             raise ValueError(
                 f"Unknown weighting strategy: {self.cfg.weighting_strategy}"
@@ -639,69 +688,119 @@ class StableDiffusionUnifiedGuidance(BaseModule):
 
         grad = w * (eps_pretrain - eps_phi)
 
+        if self.grad_clip_val is not None:
+            grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)
+
+        grad = torch.nan_to_num(grad)
+        
         # compute decoded image if needed for visualization/img loss
-        if self.cfg.return_rgb_1step_orig or self.cfg.use_img_loss:
+        return_rgb_1step_orig = self.cfg.return_rgb_1step_orig or return_rgb_1step_orig or (self.cfg.use_img_loss in ["gt"])
+        if return_rgb_1step_orig:
             with torch.no_grad():
+                latents_1step_orig = (
+                    latents - self.sigmas[t_ref].view(-1, 1, 1, 1)
+                    / self.alphas[t_ref].view(-1, 1, 1, 1)
+                    * (eps_pretrain_img - eps_phi)
+                )
                 image_denoised_pretrain = self.vae_decode(
                     self.pipe.vae, latents_1step_orig
                 )
                 rgb_1step_orig = image_denoised_pretrain.permute(0, 2, 3, 1)
-
-        if self.grad_clip_val is not None:
-            grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)
+                ### DEV ###
+                latents_1step_orig = (
+                    1
+                    / self.alphas[t_ref].view(-1, 1, 1, 1)
+                    * (latents_noisy - self.sigmas[t_ref].view(-1, 1, 1, 1) * eps_phi)
+                )
+                image_denoised_pretrain = self.vae_decode(
+                    self.pipe.vae, latents_1step_orig
+                )
+                image_denoised_pretrain = torch.nan_to_num(image_denoised_pretrain)
+                rgb_1step_orig_phi = image_denoised_pretrain.permute(0, 2, 3, 1)
+                ### DEV ###
 
         # reparameterization trick:
         # d(loss)/d(latents) = latents - target = latents - (latents - grad) = grad
-        target = (latents - grad).detach()
-        loss_sd = 0.5 * F.mse_loss(latents, target, reduction="sum") / batch_size
+        target = latents_ref - grad
+        loss_sd = self.loss_fn(latents, target) / batch_size
+        # for statistic
+        # with torch.no_grad():
+        #     grad_noise = pretrain_pred_utils["noise_pred_uncond"] - eps_phi
+        #     grad_cfg = pretrain_pred_utils["noise_pred_text"] - pretrain_pred_utils["noise_pred_uncond"]
+        #     cos_val = (noise * latents).sum()/latents.norm()/noise.norm()
+        #     cos_val_grad = -(noise * grad).sum()/grad.norm()/noise.norm()
+        #     cos_val_noise = -(noise * grad_noise).sum()/grad_noise.norm()/noise.norm()
+        #     cos_val_cfg = -(noise * grad_cfg).sum()/grad_cfg.norm()/noise.norm()
+        #     sds_norm = grad_noise.norm()
+        #     cfg_norm = grad_cfg.norm()
 
         guidance_out = {
             "loss_sd": loss_sd,
             "grad_norm": grad.norm(),
-            "timesteps": t,
-            "min_step": self.min_step,
-            "max_step": self.max_step,
+            "timesteps": t_ref,
             "latents": latents,
-            "latents_1step_orig": latents_1step_orig,
-            "rgb": rgb_BCHW.permute(0, 2, 3, 1),
             "weights": w,
-            "lambdas": self.lambdas[t],
+            "lambdas": self.lambdas[t_ref],
+            "guidance_scale": self.guidance_scale,
+            "guidance_scale_img": self.guidance_scale_img,
+            # "cos_val": cos_val, # for statistic porpose only
+            # "cos_val_noise": cos_val_noise,
+            # "cos_val_cfg": cos_val_cfg,
+            # "cos_val_grad": cos_val_grad,
+            # "sds_norm": sds_norm,
+            # "cfg_norm": cfg_norm,
         }
+        if self.cfg.consistency_training:
+            guidance_out.update({
+                "timesteps_target": t_tgt,
+                "lambdas_target": self.lambdas[t_tgt],
+            })
 
         # image-space loss proposed in HiFA: https://hifa-team.github.io/HiFA-site
-        if self.cfg.use_img_loss:
-            if self.cfg.guidance_type == "vsd":
-                latents_denoised_est = (
-                    latents_noisy - self.sigmas[t] * eps_phi
-                ) / self.alphas[t].view(-1, 1, 1, 1)
-                image_denoised_est = self.vae_decode(
-                    self.pipe.vae, latents_denoised_est
+        if self.cfg.use_img_loss is not None:
+            # FIXME: add support for vsd+img_loss+consistency_training (is that necessary?)
+            # if self.cfg.guidance_type == "vsd":
+            #     latents_denoised_est = (
+            #         latents_noisy - self.sigmas[t_ref] * eps_phi
+            #     ) / self.alphas[t_ref].view(-1, 1, 1, 1)
+            #     image_denoised_est = self.vae_decode(
+            #         self.pipe.vae, latents_denoised_est
+            #     )
+            # else:
+            #     image_denoised_est = rgb_BCHW_512
+            # grad_img = (
+            #     (rgb_ref_BCHW_512 - image_denoised_pretrain)
+            #     * self.alphas[t_ref].view(-1, 1, 1, 1)
+            #     / self.sigmas[t_ref].view(-1, 1, 1, 1)
+            # )
+            # if self.grad_clip_val is not None:
+            #     grad_img = grad_img.clamp(-self.grad_clip_val, self.grad_clip_val)
+            # target_img = rgb_ref_BCHW_512 - grad_img
+            if self.cfg.use_img_loss == "decode":
+                with torch.no_grad():
+                    rgb_target = self.vae_decode(self.pipe.vae, latents)
+                loss_sd_img = (
+                    self.loss_fn(rgb_BCHW_512, rgb_target) / batch_size
+                )
+            elif self.cfg.use_img_loss == "gt":
+                loss_sd_img = (
+                    self.loss_fn(rgb_BCHW_512, image_denoised_pretrain) / batch_size
                 )
             else:
-                image_denoised_est = rgb_BCHW_512
-            grad_img = (
-                w
-                * (image_denoised_est - image_denoised_pretrain)
-                * self.alphas[t].view(-1, 1, 1, 1)
-                / self.sigmas[t].view(-1, 1, 1, 1)
-            )
-            if self.grad_clip_val is not None:
-                grad_img = grad_img.clamp(-self.grad_clip_val, self.grad_clip_val)
-            target_img = (rgb_BCHW_512 - grad_img).detach()
-            loss_sd_img = (
-                0.5 * F.mse_loss(rgb_BCHW_512, target_img, reduction="sum") / batch_size
-            )
+                raise ValueError
             guidance_out.update({"loss_sd_img": loss_sd_img})
 
-        if self.cfg.return_rgb_1step_orig:
+        if return_rgb_1step_orig:
             guidance_out.update({"rgb_1step_orig": rgb_1step_orig})
+            guidance_out.update({"rgb_1step_orig_phi": rgb_1step_orig_phi}) # DEV
 
-        if self.cfg.return_rgb_multistep_orig:
+        return_rgb_multistep_orig = return_rgb_multistep_orig or self.cfg.return_rgb_multistep_orig
+        if return_rgb_multistep_orig:
             with self.set_scheduler(
                 self.pipe,
                 DPMSolverSinglestepScheduler,
                 solver_order=1,
-                num_train_timesteps=int(t[0]),
+                num_train_timesteps=int(t_ref[0]),
             ) as pipe:
                 text_embeddings = prompt_utils.get_text_embeddings(
                     elevation,
@@ -713,7 +812,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 with torch.cuda.amp.autocast(enabled=False):
                     latents_multistep_orig = pipe(
                         num_inference_steps=self.cfg.n_rgb_multistep_orig_steps,
-                        guidance_scale=self.cfg.guidance_scale,
+                        guidance_scale=self.guidance_scale,
                         eta=1.0,
                         latents=latents_noisy.to(pipe.unet.dtype),
                         prompt_embeds=text_embeddings_cond.to(pipe.unet.dtype),
@@ -745,10 +844,10 @@ class StableDiffusionUnifiedGuidance(BaseModule):
 
         return guidance_out
 
-    @torch.cuda.amp.autocast(enabled=False)
-    def set_min_max_steps(self, min_step_percent=0.02, max_step_percent=0.98):
-        self.min_step = int(self.num_train_timesteps * min_step_percent)
-        self.max_step = int(self.num_train_timesteps * max_step_percent)
+    # @torch.cuda.amp.autocast(enabled=False)
+    # def set_min_max_steps(self, min_step_percent=0.02, max_step_percent=0.98):
+    #     self.min_step = int(self.num_train_timesteps * min_step_percent)
+    #     self.max_step = int(self.num_train_timesteps * max_step_percent)
 
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
         # clip grad for stable training as demonstrated in
@@ -757,23 +856,10 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         if self.cfg.grad_clip is not None:
             self.grad_clip_val = C(self.cfg.grad_clip, epoch, global_step)
 
-        if self.cfg.sqrt_anneal:
-            percentage = (
-                float(global_step) / self.cfg.trainer_max_steps
-            ) ** 0.5  # progress percentage
-            if type(self.cfg.max_step_percent) not in [float, int]:
-                max_step_percent = self.cfg.max_step_percent[1]
-            else:
-                max_step_percent = self.cfg.max_step_percent
-            curr_percent = (
-                max_step_percent - C(self.cfg.min_step_percent, epoch, global_step)
-            ) * (1 - percentage) + C(self.cfg.min_step_percent, epoch, global_step)
-            self.set_min_max_steps(
-                min_step_percent=curr_percent,
-                max_step_percent=curr_percent,
-            )
+        if isinstance(self.cfg.ct_weighting_strategy, str) or self.cfg.ct_weighting_strategy is None:
+            self.w_factor = 1.0
         else:
-            self.set_min_max_steps(
-                min_step_percent=C(self.cfg.min_step_percent, epoch, global_step),
-                max_step_percent=C(self.cfg.max_step_percent, epoch, global_step),
-            )
+            self.w_factor = C(self.cfg.ct_weighting_strategy, epoch, global_step)
+
+        self.guidance_scale = C(self.cfg.guidance_scale, epoch, global_step)
+        self.guidance_scale_img = C(self.cfg.guidance_scale_img, epoch, global_step)

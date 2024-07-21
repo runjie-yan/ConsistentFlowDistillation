@@ -110,6 +110,83 @@ def get_activation(name) -> Callable:
             raise ValueError(f"Unknown activation function: {name}")
 
 
+def chunk_batch_seq(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
+    if chunk_size <= 0:
+        return func(*args, **kwargs)
+    B = None
+    for arg in list(args) + list(kwargs.values()):
+        if isinstance(arg, torch.Tensor):
+            B = arg.shape[0]
+            break
+    assert (
+        B is not None
+    ), "No tensor found in args or kwargs, cannot determine batch size."
+    
+    calls = []
+    def func_call(i):
+        def seq_call(inp):
+            out, out_type, chunk_length = inp
+            out_chunk = func(
+                *[
+                    arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
+                    for arg in args
+                ],
+                **{
+                    k: arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
+                    for k, arg in kwargs.items()
+                },
+            )
+            if out_chunk is None:
+                return out, out_type, chunk_length
+            out_type = type(out_chunk)
+            if isinstance(out_chunk, torch.Tensor):
+                out_chunk = {0: out_chunk}
+            elif isinstance(out_chunk, tuple) or isinstance(out_chunk, list):
+                chunk_length = len(out_chunk)
+                out_chunk = {i: chunk for i, chunk in enumerate(out_chunk)}
+            elif isinstance(out_chunk, dict):
+                pass
+            else:
+                print(
+                    f"Return value of func must be in type [torch.Tensor, list, tuple, dict], get {type(out_chunk)}."
+                )
+                exit(1)
+            for k, v in out_chunk.items():
+                v = v if torch.is_grad_enabled() or v is None else v.detach()
+                out[k].append(v)
+            return out, out_type, chunk_length
+        return seq_call
+    
+    for i in range(0, max(1, B), chunk_size):
+        calls.append(func_call(i))
+
+    from torch.utils.checkpoint import checkpoint_sequential
+    out = defaultdict(list)
+    out_type = None
+    out, out_type, chunk_length = checkpoint_sequential(calls, len(calls), (out, out_type, 0), use_reentrant=False)
+
+    if out_type is None:
+        return None
+
+    out_merged: Dict[Any, Optional[torch.Tensor]] = {}
+    for k, v in out.items():
+        if all([vv is None for vv in v]):
+            # allow None in return value
+            out_merged[k] = None
+        elif all([isinstance(vv, torch.Tensor) for vv in v]):
+            out_merged[k] = torch.cat(v, dim=0)
+        else:
+            raise TypeError(
+                f"Unsupported types in return value of func: {[type(vv) for vv in v if not isinstance(vv, torch.Tensor)]}"
+            )
+
+    if out_type is torch.Tensor:
+        return out_merged[0]
+    elif out_type in [tuple, list]:
+        return out_type([out_merged[i] for i in range(chunk_length)])
+    elif out_type is dict:
+        return out_merged
+    
 def chunk_batch(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
     if chunk_size <= 0:
         return func(*args, **kwargs)
@@ -135,6 +212,94 @@ def chunk_batch(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
                 for k, arg in kwargs.items()
             },
         )
+        if out_chunk is None:
+            continue
+        out_type = type(out_chunk)
+        if isinstance(out_chunk, torch.Tensor):
+            out_chunk = {0: out_chunk}
+        elif isinstance(out_chunk, tuple) or isinstance(out_chunk, list):
+            chunk_length = len(out_chunk)
+            out_chunk = {i: chunk for i, chunk in enumerate(out_chunk)}
+        elif isinstance(out_chunk, dict):
+            pass
+        else:
+            print(
+                f"Return value of func must be in type [torch.Tensor, list, tuple, dict], get {type(out_chunk)}."
+            )
+            exit(1)
+        for k, v in out_chunk.items():
+            v = v if torch.is_grad_enabled() else v.detach()
+            out[k].append(v)
+
+    if out_type is None:
+        return None
+
+    out_merged: Dict[Any, Optional[torch.Tensor]] = {}
+    for k, v in out.items():
+        if all([vv is None for vv in v]):
+            # allow None in return value
+            out_merged[k] = None
+        elif all([isinstance(vv, torch.Tensor) for vv in v]):
+            out_merged[k] = torch.cat(v, dim=0)
+        else:
+            raise TypeError(
+                f"Unsupported types in return value of func: {[type(vv) for vv in v if not isinstance(vv, torch.Tensor)]}"
+            )
+
+    if out_type is torch.Tensor:
+        return out_merged[0]
+    elif out_type in [tuple, list]:
+        return out_type([out_merged[i] for i in range(chunk_length)])
+    elif out_type is dict:
+        return out_merged
+    
+def chunk_batch_with_budget(
+    func: Callable, 
+    chunk_size: int, 
+    *args, 
+    chunk_budget: Optional[int] = None,
+    over_sale_factor: int = 1.5, # avoiding wasting 
+    **kwargs
+) -> Any:
+    if chunk_size <= 0:
+        return func(*args, **kwargs)
+    B = None
+    for arg in list(args) + list(kwargs.values()):
+        if isinstance(arg, torch.Tensor):
+            B = arg.shape[0]
+            break
+    assert (
+        B is not None
+    ), "No tensor found in args or kwargs, cannot determine batch size."
+    out = defaultdict(list)
+    out_type = None
+    # max(1, B) to support B == 0
+    B_ = max(1, B)
+    for i in range(0, B_, chunk_size):
+        # compute chunk budget
+        cur_chunk_budget = None
+        if chunk_budget is not None:
+            cur_chunk_budget = min(chunk_budget, int(chunk_budget * over_sale_factor * min(chunk_size, B_-i)/(B_-i)))
+        
+        chunk_budget_remain, out_chunk = func(
+            *[
+                arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
+                for arg in args
+            ],
+            chunk_budget = cur_chunk_budget,
+            **{
+                k: arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
+                for k, arg in kwargs.items()
+            },
+        )
+        
+        # update chunk budget
+        if chunk_budget is not None:
+            if chunk_budget_remain is not None:
+                chunk_budget = chunk_budget - cur_chunk_budget + chunk_budget_remain
+            else:
+                chunk_budget = chunk_budget - cur_chunk_budget
+        
         if out_chunk is None:
             continue
         out_type = type(out_chunk)
@@ -510,7 +675,7 @@ def perpendicular_component(x: Float[Tensor, "B C H W"], y: Float[Tensor, "B C H
 
 def validate_empty_rays(ray_indices, t_start, t_end):
     if ray_indices.nelement() == 0:
-        threestudio.warn("Empty rays_indices!")
+        # threestudio.warn("Empty rays_indices!")
         ray_indices = torch.LongTensor([0]).to(ray_indices)
         t_start = torch.Tensor([0]).to(ray_indices)
         t_end = torch.Tensor([0]).to(ray_indices)

@@ -105,6 +105,9 @@ class ImplicitVolume(BaseImplicitGeometry):
         raw_density: Float[Tensor, "*N 1"] = density + density_bias
         density = get_activation(self.cfg.density_activation)(raw_density)
         return raw_density, density
+    
+    def get_enc(self, points: Float[Tensor, "*N Di"]):
+        return self.encoding(points)
 
     def forward(
         self, points: Float[Tensor, "*N Di"], output_normal: bool = False
@@ -120,7 +123,7 @@ class ImplicitVolume(BaseImplicitGeometry):
             points, self.bbox, self.unbounded
         )  # points normalized to (0, 1)
 
-        enc = self.encoding(points.view(-1, self.cfg.n_input_dims))
+        enc = self.get_enc(points.view(-1, self.cfg.n_input_dims))
         density = self.density_network(enc).view(*points.shape[:-1], 1)
         raw_density, density = self.get_activated_density(points_unscaled, density)
 
@@ -198,9 +201,8 @@ class ImplicitVolume(BaseImplicitGeometry):
     def forward_density(self, points: Float[Tensor, "*N Di"]) -> Float[Tensor, "*N 1"]:
         points_unscaled = points
         points = contract_to_unisphere(points_unscaled, self.bbox, self.unbounded)
-
         density = self.density_network(
-            self.encoding(points.reshape(-1, self.cfg.n_input_dims))
+            self.get_enc(points.reshape(-1, self.cfg.n_input_dims))
         ).reshape(*points.shape[:-1], 1)
 
         _, density = self.get_activated_density(points_unscaled, density)
@@ -227,7 +229,7 @@ class ImplicitVolume(BaseImplicitGeometry):
             return out
         points_unscaled = points
         points = contract_to_unisphere(points_unscaled, self.bbox, self.unbounded)
-        enc = self.encoding(points.reshape(-1, self.cfg.n_input_dims))
+        enc = self.get_enc(points.reshape(-1, self.cfg.n_input_dims))
         features = self.feature_network(enc).view(
             *points.shape[:-1], self.cfg.n_feature_dims
         )

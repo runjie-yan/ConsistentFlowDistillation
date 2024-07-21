@@ -17,16 +17,33 @@ OmegaConf.register_new_resolver("mul", lambda a, b: a * b)
 OmegaConf.register_new_resolver("div", lambda a, b: a / b)
 OmegaConf.register_new_resolver("idiv", lambda a, b: a // b)
 OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
-OmegaConf.register_new_resolver("rmspace", lambda s, sub: s.replace(" ", sub))
+OmegaConf.register_new_resolver("rmspace", lambda s, sub: str(s).replace(" ", sub))
 OmegaConf.register_new_resolver("tuple2", lambda s: [float(s), float(s)])
 OmegaConf.register_new_resolver("gt0", lambda s: s > 0)
+OmegaConf.register_new_resolver("str", lambda s: str(s))
 OmegaConf.register_new_resolver("cmaxgt0", lambda s: C_max(s) > 0)
 OmegaConf.register_new_resolver("not", lambda s: not s)
 OmegaConf.register_new_resolver(
     "cmaxgt0orcmaxgt0", lambda a, b: C_max(a) > 0 or C_max(b) > 0
 )
+OmegaConf.register_new_resolver(
+    "gentag", lambda *a: generate_tag(*a)
+)
 # ======================================================= #
 
+def generate_tag(*input_list) -> str:
+    tag = ''
+    is_str_last = None
+    for obj in input_list:
+        is_str_this = isinstance(obj, str)
+        if is_str_last is None or (is_str_last and not is_str_this):
+            tag+=str(obj)
+        else:
+            tag+='-'
+            tag+=str(obj)
+            
+        is_str_last = is_str_this
+    return tag
 
 def C_max(value: Any) -> float:
     if isinstance(value, int) or isinstance(value, float):

@@ -63,8 +63,8 @@ class PatchRenderer(VolumeRenderer):
             )
 
             PS = self.cfg.patch_size
-            patch_x = torch.randint(0, W - PS, (1,)).item()
-            patch_y = torch.randint(0, H - PS, (1,)).item()
+            patch_x = torch.randint(0, max((W - PS)//2, 1), (2,)).sum().item()
+            patch_y = torch.randint(0, max((H - PS)//2, 1), (2,)).sum().item()
             patch_rays_o = rays_o[:, patch_y : patch_y + PS, patch_x : patch_x + PS]
             patch_rays_d = rays_d[:, patch_y : patch_y + PS, patch_x : patch_x + PS]
             out = self.base_renderer(

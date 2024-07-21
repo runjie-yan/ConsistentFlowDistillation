@@ -31,9 +31,6 @@ class DeepFloydGuidance(BaseObject):
         ] = None  # field(default_factory=lambda: [0, 2.0, 8.0, 1000])
         half_precision_weights: bool = True
 
-        min_step_percent: float = 0.02
-        max_step_percent: float = 0.98
-
         weighting_strategy: str = "sds"
 
         view_dependent_prompting: bool = True
@@ -94,7 +91,6 @@ class DeepFloydGuidance(BaseObject):
         self.scheduler = self.pipe.scheduler
 
         self.num_train_timesteps = self.scheduler.config.num_train_timesteps
-        self.set_min_max_steps()  # set to default value
 
         self.alphas: Float[Tensor, "..."] = self.scheduler.alphas_cumprod.to(
             self.device
@@ -103,11 +99,6 @@ class DeepFloydGuidance(BaseObject):
         self.grad_clip_val: Optional[float] = None
 
         threestudio.info(f"Loaded Deep Floyd!")
-
-    @torch.cuda.amp.autocast(enabled=False)
-    def set_min_max_steps(self, min_step_percent=0.02, max_step_percent=0.98):
-        self.min_step = int(self.num_train_timesteps * min_step_percent)
-        self.max_step = int(self.num_train_timesteps * max_step_percent)
 
     @torch.cuda.amp.autocast(enabled=False)
     def forward_unet(
@@ -130,27 +121,21 @@ class DeepFloydGuidance(BaseObject):
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
+        t_perc_ref: Float[Tensor, "B"],
         rgb_as_latents=False,
         guidance_eval=False,
+        noise: Float[Tensor, "NB 4 64 64"]=None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
 
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
+        t_ref = torch.round(self.num_train_timesteps*t_perc_ref).to(dtype=torch.long,device=self.device)
 
         assert rgb_as_latents == False, f"No latent space in {self.__class__.__name__}"
         rgb_BCHW = rgb_BCHW * 2.0 - 1.0  # scale to [-1, 1] to match the diffusion range
         latents = F.interpolate(
             rgb_BCHW, (64, 64), mode="bilinear", align_corners=False
-        )
-
-        # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
-        t = torch.randint(
-            self.min_step,
-            self.max_step + 1,
-            [batch_size],
-            dtype=torch.long,
-            device=self.device,
         )
 
         if prompt_utils.use_perp_neg:
@@ -161,12 +146,11 @@ class DeepFloydGuidance(BaseObject):
                 elevation, azimuth, camera_distances, self.cfg.view_dependent_prompting
             )
             with torch.no_grad():
-                noise = torch.randn_like(latents)
-                latents_noisy = self.scheduler.add_noise(latents, noise, t)
+                latents_noisy = self.scheduler.add_noise(latents, noise, t_ref)
                 latent_model_input = torch.cat([latents_noisy] * 4, dim=0)
                 noise_pred = self.forward_unet(
                     latent_model_input,
-                    torch.cat([t] * 4),
+                    torch.cat([t_ref] * 4),
                     encoder_hidden_states=text_embeddings,
                 )  # (4B, 6, 64, 64)
 
@@ -196,13 +180,12 @@ class DeepFloydGuidance(BaseObject):
             # predict the noise residual with unet, NO grad!
             with torch.no_grad():
                 # add noise
-                noise = torch.randn_like(latents)  # TODO: use torch generator
-                latents_noisy = self.scheduler.add_noise(latents, noise, t)
+                latents_noisy = self.scheduler.add_noise(latents, noise, t_ref)
                 # pred noise
                 latent_model_input = torch.cat([latents_noisy] * 2, dim=0)
                 noise_pred = self.forward_unet(
                     latent_model_input,
-                    torch.cat([t] * 2),
+                    torch.cat([t_ref] * 2),
                     encoder_hidden_states=text_embeddings,
                 )  # (2B, 6, 64, 64)
 
@@ -226,11 +209,11 @@ class DeepFloydGuidance(BaseObject):
 
         if self.cfg.weighting_strategy == "sds":
             # w(t), sigma_t^2
-            w = (1 - self.alphas[t]).view(-1, 1, 1, 1)
+            w = (1 - self.alphas[t_ref]).view(-1, 1, 1, 1)
         elif self.cfg.weighting_strategy == "uniform":
             w = 1
         elif self.cfg.weighting_strategy == "fantasia3d":
-            w = (self.alphas[t] ** 0.5 * (1 - self.alphas[t])).view(-1, 1, 1, 1)
+            w = (self.alphas[t_ref] ** 0.5 * (1 - self.alphas[t_ref])).view(-1, 1, 1, 1)
         else:
             raise ValueError(
                 f"Unknown weighting strategy: {self.cfg.weighting_strategy}"
@@ -249,10 +232,12 @@ class DeepFloydGuidance(BaseObject):
         loss_sds = 0.5 * F.mse_loss(latents, target, reduction="sum") / batch_size
 
         guidance_out = {
-            "loss_sds": loss_sds,
+            "loss_sd": loss_sds,
             "grad_norm": grad.norm(),
-            "min_step": self.min_step,
-            "max_step": self.max_step,
+            "timesteps": t_ref,
+            "latents": latents,
+            "weights": w,
+            "guidance_scale": self.cfg.guidance_scale,
         }
 
         if guidance_eval:
@@ -260,7 +245,7 @@ class DeepFloydGuidance(BaseObject):
                 "use_perp_neg": prompt_utils.use_perp_neg,
                 "neg_guidance_weights": neg_guidance_weights,
                 "text_embeddings": text_embeddings,
-                "t_orig": t,
+                "t_orig": t_ref,
                 "latents_noisy": latents_noisy,
                 "noise_pred": torch.cat([noise_pred, predicted_variance], dim=1),
             }
@@ -414,12 +399,6 @@ class DeepFloydGuidance(BaseObject):
         # http://arxiv.org/abs/2303.15413
         if self.cfg.grad_clip is not None:
             self.grad_clip_val = C(self.cfg.grad_clip, epoch, global_step)
-
-        self.set_min_max_steps(
-            min_step_percent=C(self.cfg.min_step_percent, epoch, global_step),
-            max_step_percent=C(self.cfg.max_step_percent, epoch, global_step),
-        )
-
 
 """
 # used by thresholding, experimental

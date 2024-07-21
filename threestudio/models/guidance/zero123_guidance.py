@@ -261,6 +261,7 @@ class Zero123Guidance(BaseObject):
         camera_distances: Float[Tensor, "B"],
         rgb_as_latents=False,
         guidance_eval=False,
+        noise=None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
@@ -294,7 +295,6 @@ class Zero123Guidance(BaseObject):
         # predict the noise residual with unet, NO grad!
         with torch.no_grad():
             # add noise
-            noise = torch.randn_like(latents)  # TODO: use torch generator
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             x_in = torch.cat([latents_noisy] * 2)

@@ -1,0 +1,97 @@
+name: "cfd-2d"
+tag: "seed${seed}-${rmspace:${system.prompt_processor.prompt},_}"
+exp_root_dir: "outputs"
+seed: 0
+
+data_type: "placeholder-datamodule"
+data:
+  batch_size: 1
+
+system_type: "distillation-2d-system"
+system:
+  rgb_as_latents: true
+  enable_snr_metric: false
+  imgenerator_type: "image-grid"
+  imgenerator:
+    embedding_frozen: False
+    n_hidden_dims: 4
+    height: 64  
+    width: 64
+    n_output_dims: 4
+    init_mode: zeros
+    mlp_decoding: false
+    mlp_network_config:
+      otype: VanillaMLP
+      activation: ReLU
+      output_activation: none
+      n_neurons: 32
+      n_hidden_layers: 0
+
+  t_scheduler_type: timestep-scheduler
+  t_scheduler:
+    min_step_percent: 0.02
+    max_step_percent: 0.98
+    sqrt_anneal: false
+    dreamtime_anneal: null
+    trainer_max_steps: ${trainer.max_steps}
+    linear_anneal_max: [0.,1.0]
+    linear_anneal_min: [0.,1.0]
+    linear_anneal_steps: [0,500]
+
+  noise_generator_type: "noise-generator"
+  noise_generator:
+    sqrt_beta: 1.0
+    weight_decay: 1.0
+
+  prompt_processor_type: "stable-diffusion-prompt-processor"
+  prompt_processor:
+    pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+    prompt: ???
+    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, ugly, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
+
+  guidance_type: "stable-diffusion-unified-guidance"
+  guidance:
+    weighting_strategy: dmd
+    guidance_type: sds
+    guidance_stab_type: null
+    pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
+    guidance_scale: 7.
+    guidance_scale_img: 3.
+    use_img_loss: null
+
+  loggers:
+    wandb:
+      enable: false
+      project: ${name}
+      name: ${tag}
+
+  loss:
+    lambda_sd: 1.
+    lambda_train_phi: 1.
+
+  optimizer:
+    name: Adam
+    args:
+      lr: 0.01
+      betas: [0., 0.99]
+      eps: 1.e-15
+    params:
+      imgenerator.embedding:
+        lr: 2.5e-3
+      imgenerator.decoder:
+        lr: 1e-4
+      guidance:
+        lr: 1e-4
+
+trainer:
+  max_steps: 500
+  log_every_n_steps: 20
+  num_sanity_val_steps: 0
+  val_check_interval: 50
+  enable_progress_bar: true
+  precision: 16-mixed
+
+checkpoint:
+  save_last: true # save at each validation time
+  save_top_k: -1
+  every_n_train_steps: ${trainer.max_steps}

@@ -121,8 +121,9 @@ def chunk_batch_seq(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
     assert (
         B is not None
     ), "No tensor found in args or kwargs, cannot determine batch size."
-    
+
     calls = []
+
     def func_call(i):
         def seq_call(inp):
             out, out_type, chunk_length = inp
@@ -155,15 +156,19 @@ def chunk_batch_seq(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
                 v = v if torch.is_grad_enabled() or v is None else v.detach()
                 out[k].append(v)
             return out, out_type, chunk_length
+
         return seq_call
-    
+
     for i in range(0, max(1, B), chunk_size):
         calls.append(func_call(i))
 
     from torch.utils.checkpoint import checkpoint_sequential
+
     out = defaultdict(list)
     out_type = None
-    out, out_type, chunk_length = checkpoint_sequential(calls, len(calls), (out, out_type, 0), use_reentrant=False)
+    out, out_type, chunk_length = checkpoint_sequential(
+        calls, len(calls), (out, out_type, 0), use_reentrant=False
+    )
 
     if out_type is None:
         return None
@@ -186,7 +191,8 @@ def chunk_batch_seq(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
         return out_type([out_merged[i] for i in range(chunk_length)])
     elif out_type is dict:
         return out_merged
-    
+
+
 def chunk_batch(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
     if chunk_size <= 0:
         return func(*args, **kwargs)
@@ -252,14 +258,15 @@ def chunk_batch(func: Callable, chunk_size: int, *args, **kwargs) -> Any:
         return out_type([out_merged[i] for i in range(chunk_length)])
     elif out_type is dict:
         return out_merged
-    
+
+
 def chunk_batch_with_budget(
-    func: Callable, 
-    chunk_size: int, 
-    *args, 
+    func: Callable,
+    chunk_size: int,
+    *args,
     chunk_budget: Optional[int] = None,
-    over_sale_factor: int = 1.5, # avoiding wasting 
-    **kwargs
+    over_sale_factor: int = 1.5,  # avoiding wasting
+    **kwargs,
 ) -> Any:
     if chunk_size <= 0:
         return func(*args, **kwargs)
@@ -279,27 +286,32 @@ def chunk_batch_with_budget(
         # compute chunk budget
         cur_chunk_budget = None
         if chunk_budget is not None:
-            cur_chunk_budget = min(chunk_budget, int(chunk_budget * over_sale_factor * min(chunk_size, B_-i)/(B_-i)))
-        
+            cur_chunk_budget = min(
+                chunk_budget,
+                int(
+                    chunk_budget * over_sale_factor * min(chunk_size, B_ - i) / (B_ - i)
+                ),
+            )
+
         chunk_budget_remain, out_chunk = func(
             *[
                 arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
                 for arg in args
             ],
-            chunk_budget = cur_chunk_budget,
+            chunk_budget=cur_chunk_budget,
             **{
                 k: arg[i : i + chunk_size] if isinstance(arg, torch.Tensor) else arg
                 for k, arg in kwargs.items()
             },
         )
-        
+
         # update chunk budget
         if chunk_budget is not None:
             if chunk_budget_remain is not None:
                 chunk_budget = chunk_budget - cur_chunk_budget + chunk_budget_remain
             else:
                 chunk_budget = chunk_budget - cur_chunk_budget
-        
+
         if out_chunk is None:
             continue
         out_type = type(out_chunk)

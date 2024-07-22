@@ -124,13 +124,15 @@ class DeepFloydGuidance(BaseObject):
         t_perc_ref: Float[Tensor, "B"],
         rgb_as_latents=False,
         guidance_eval=False,
-        noise: Float[Tensor, "NB 4 64 64"]=None,
+        noise: Float[Tensor, "NB 4 64 64"] = None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
 
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
-        t_ref = torch.round(self.num_train_timesteps*t_perc_ref).to(dtype=torch.long,device=self.device)
+        t_ref = torch.round(self.num_train_timesteps * t_perc_ref).to(
+            dtype=torch.long, device=self.device
+        )
 
         assert rgb_as_latents == False, f"No latent space in {self.__class__.__name__}"
         rgb_BCHW = rgb_BCHW * 2.0 - 1.0  # scale to [-1, 1] to match the diffusion range
@@ -399,6 +401,7 @@ class DeepFloydGuidance(BaseObject):
         # http://arxiv.org/abs/2303.15413
         if self.cfg.grad_clip is not None:
             self.grad_clip_val = C(self.cfg.grad_clip, epoch, global_step)
+
 
 """
 # used by thresholding, experimental

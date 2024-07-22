@@ -296,9 +296,11 @@ class ImageConditionDreamFusion(BaseLift3DSystem):
                     "kwargs": {"cmap": None, "data_range": (0, 1)},
                 },
             ],
-            name=f"validation_step_batchidx_{batch_idx}"
-            if batch_idx in [0, 7, 15, 23, 29]
-            else None,
+            name=(
+                f"validation_step_batchidx_{batch_idx}"
+                if batch_idx in [0, 7, 15, 23, 29]
+                else None
+            ),
             step=self.true_global_step,
         )
 

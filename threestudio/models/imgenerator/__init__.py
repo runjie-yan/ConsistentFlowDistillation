@@ -1,4 +1,1 @@
-from . import (
-    base,
-    image_grid,
-)
+from . import base, image_grid

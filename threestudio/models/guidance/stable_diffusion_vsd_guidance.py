@@ -459,7 +459,7 @@ class StableDiffusionVSDGuidance(BaseModule):
         text_embeddings_vd: Float[Tensor, "BB 77 768"],
         text_embeddings: Float[Tensor, "BB 77 768"],
         camera_condition: Float[Tensor, "B 4 4"],
-        noise: Float[Tensor, "B 4 64 64"]=None,
+        noise: Float[Tensor, "B 4 64 64"] = None,
     ):
         B = latents.shape[0]
 
@@ -630,7 +630,7 @@ class StableDiffusionVSDGuidance(BaseModule):
         mvp_mtx: Float[Tensor, "B 4 4"],
         c2w: Float[Tensor, "B 4 4"],
         rgb_as_latents=False,
-        noise: Optional[Float[Tensor, "B 4 64 64"]]=None,
+        noise: Optional[Float[Tensor, "B 4 64 64"]] = None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
@@ -663,7 +663,11 @@ class StableDiffusionVSDGuidance(BaseModule):
             )
 
         grad, grad_img = self.compute_grad_vsd(
-            latents, text_embeddings_vd, text_embeddings, camera_condition, noise,
+            latents,
+            text_embeddings_vd,
+            text_embeddings,
+            camera_condition,
+            noise,
         )
 
         grad = torch.nan_to_num(grad)

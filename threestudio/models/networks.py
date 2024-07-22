@@ -166,117 +166,133 @@ class ProgressiveBandHashGrid(nn.Module, Updateable):
         self.current_level = current_level
         self.mask[: self.current_level * self.n_features_per_level] = 1.0
 
+
 class TriplaneEncoding(nn.Module):
     def __init__(self, in_channels, config, dtype=torch.float32):
         super().__init__()
-        assert in_channels == 3, f"{type(self).__name__} does not support input channel that != 3"
-        self.init_mode: str = config['init_mode']
-        self.tensorf: bool = config['tensorf']
-        self.op_resolution: str = config['op_resolution']
+        assert (
+            in_channels == 3
+        ), f"{type(self).__name__} does not support input channel that != 3"
+        self.init_mode: str = config["init_mode"]
+        self.tensorf: bool = config["tensorf"]
+        self.op_resolution: str = config["op_resolution"]
 
-        self.n_features_per_level: int = config['n_features_per_level']
-        self.base_resolution: int = config['base_resolution']
-        self.per_level_scale: float = config['per_level_scale']
-        self.n_levels: int = config['n_levels']
-        self.with_parameters: bool = config['with_parameters']
+        self.n_features_per_level: int = config["n_features_per_level"]
+        self.base_resolution: int = config["base_resolution"]
+        self.per_level_scale: float = config["per_level_scale"]
+        self.n_levels: int = config["n_levels"]
+        self.with_parameters: bool = config["with_parameters"]
 
         self.resolutions = [
-            int(self.base_resolution * self.per_level_scale ** i)
-            for i in range(self.n_levels) 
+            int(self.base_resolution * self.per_level_scale**i)
+            for i in range(self.n_levels)
         ]
         if self.with_parameters:
-            self.triplanes = nn.ParameterList([
-                nn.Parameter(
-                    torch.empty((3, self.n_features_per_level, res, res), dtype=dtype)
-                )
-                for res in self.resolutions
-            ])
+            self.triplanes = nn.ParameterList(
+                [
+                    nn.Parameter(
+                        torch.empty(
+                            (3, self.n_features_per_level, res, res), dtype=dtype
+                        )
+                    )
+                    for res in self.resolutions
+                ]
+            )
         else:
-            self.register_parameter('triplanes', None)
-        
+            self.register_parameter("triplanes", None)
+
         if self.tensorf and self.with_parameters:
-            self.trilines = nn.ParameterList([
-                nn.Parameter(
-                    torch.empty((3, self.n_features_per_level, res, 1), dtype=dtype)
-                )
-                for res in self.resolutions
-            ])
+            self.trilines = nn.ParameterList(
+                [
+                    nn.Parameter(
+                        torch.empty((3, self.n_features_per_level, res, 1), dtype=dtype)
+                    )
+                    for res in self.resolutions
+                ]
+            )
         else:
-            self.register_parameter('trilines', None)
+            self.register_parameter("trilines", None)
         self.reset_parameters()
-        
+
         self.n_input_dims = in_channels
-        if self.op_resolution == 'cat':
-            self.n_output_dims = 3*self.n_features_per_level*self.n_levels
-        elif self.op_resolution == 'mean':
-            self.n_output_dims = 3*self.n_features_per_level
-        
+        if self.op_resolution == "cat":
+            self.n_output_dims = 3 * self.n_features_per_level * self.n_levels
+        elif self.op_resolution == "mean":
+            self.n_output_dims = 3 * self.n_features_per_level
+
     def reset_parameters(self) -> None:
         if self.with_parameters:
-            if self.init_mode == 'normal':
+            if self.init_mode == "normal":
                 for triplane in self.triplanes:
                     nn.init.normal_(triplane)
                 if self.tensorf:
                     for triline in self.trilines:
                         nn.init.normal_(triline)
-            elif self.init_mode == 'zeros':
+            elif self.init_mode == "zeros":
                 for triplane in self.triplanes:
                     nn.init.zeros_(self.triplanes)
                 if self.tensorf:
                     for triline in self.trilines:
                         nn.init.zeros_(triline)
-        
-    def _grid_sample(self, points: Float[Tensor, "3 *N Di"], grid: Float[Tensor, "S Df G1 G2"]) -> Float[Tensor, "*N SxDf"]:
+
+    def _grid_sample(
+        self, points: Float[Tensor, "3 *N Di"], grid: Float[Tensor, "S Df G1 G2"]
+    ) -> Float[Tensor, "*N SxDf"]:
         points_shape = points.shape[1:-1]
         df = self.n_features_per_level
         di = 2
         out = F.grid_sample(
-            grid.float(), points.view(3, 1, -1, di).float(), align_corners=False, mode="bilinear"
+            grid.float(),
+            points.view(3, 1, -1, di).float(),
+            align_corners=False,
+            mode="bilinear",
         )
-        out = out.reshape(df*3, -1).T.reshape(*points_shape, df*3)
+        out = out.reshape(df * 3, -1).T.reshape(*points_shape, df * 3)
         return out
-        
+
     def forward(
-        self, 
-        x: Float[Tensor, "*N 3"], 
+        self,
+        x: Float[Tensor, "*N 3"],
         triplanes: Optional[List[Float[Tensor, "3 C R R"]]] = None,
         trilines: Optional[List[Float[Tensor, "3 C R 1"]]] = None,
     ):
         # precomputes
         if triplanes is None:
-            triplanes = self.triplanes 
+            triplanes = self.triplanes
         if trilines is None:
-            trilines = self.trilines 
+            trilines = self.trilines
         x = x * 2 - 1  # convert to [-1, 1] for grid sample
-        x_pl = torch.stack([
-                x[...,[0, 2]],
-                x[...,[1, 0]],
-                x[...,[2, 1]],
+        x_pl = torch.stack(
+            [
+                x[..., [0, 2]],
+                x[..., [1, 0]],
+                x[..., [2, 1]],
             ],
-            dim=0            
+            dim=0,
         )
         if self.tensorf:
-            x_li = torch.stack([
-                    x[...,0],
-                    x[...,1],
-                    x[...,2],
+            x_li = torch.stack(
+                [
+                    x[..., 0],
+                    x[..., 1],
+                    x[..., 2],
                 ],
-                dim=0            
+                dim=0,
             )
             x_li = torch.stack([x_li, torch.zeros_like(x_li)], dim=-1)
-            
+
         feat_level = []
         for res_id in range(self.n_levels):
             x_feat = self._grid_sample(x_pl, triplanes[res_id])
             if self.tensorf:
                 x_feat = x_feat * self._grid_sample(x_li, trilines[res_id])
             feat_level.append(x_feat)
-        if self.op_resolution == 'cat':
+        if self.op_resolution == "cat":
             feat_level = torch.cat(feat_level, dim=-1)
-        elif self.op_resolution == 'mean':
+        elif self.op_resolution == "mean":
             feat_level = torch.stack(feat_level, dim=-1).mean(dim=-1)
         return feat_level
-        
+
 
 class CompositeEncoding(nn.Module, Updateable):
     def __init__(self, encoding, include_xyz=False, xyz_scale=2.0, xyz_offset=-1.0):
@@ -297,7 +313,11 @@ class CompositeEncoding(nn.Module, Updateable):
             self.encoding(x, *args, **kwargs)
             if not self.include_xyz
             else torch.cat(
-                [x * self.xyz_scale + self.xyz_offset, self.encoding(x, *args, **kwargs)], dim=-1
+                [
+                    x * self.xyz_scale + self.xyz_offset,
+                    self.encoding(x, *args, **kwargs),
+                ],
+                dim=-1,
             )
         )
 
@@ -323,6 +343,7 @@ def get_encoding(n_input_dims: int, config) -> nn.Module:
     )  # FIXME: hard coded
     return encoding
 
+
 class SpectralNormLinear(nn.Module):
     def __init__(self, in_features, out_features, bias=True, n_power_iterations=1):
         super(SpectralNormLinear, self).__init__()
@@ -332,8 +353,8 @@ class SpectralNormLinear(nn.Module):
         if bias:
             self.bias = nn.Parameter(torch.Tensor(out_features))
         else:
-            self.register_parameter('bias', None)
-        self.register_buffer('u', torch.Tensor(1, out_features).normal_())
+            self.register_parameter("bias", None)
+        self.register_buffer("u", torch.Tensor(1, out_features).normal_())
         self.n_power_iterations = n_power_iterations
         self.reset_parameters()
 
@@ -349,9 +370,14 @@ class SpectralNormLinear(nn.Module):
     def _update_u(self):
         with torch.no_grad():
             for _ in range(self.n_power_iterations):
-                v = torch.nn.functional.normalize(torch.matmul(self.u, self.weight.data), dim=1)
-                u = torch.nn.functional.normalize(torch.matmul(v, self.weight.data.transpose(0, 1)), dim=1)
+                v = torch.nn.functional.normalize(
+                    torch.matmul(self.u, self.weight.data), dim=1
+                )
+                u = torch.nn.functional.normalize(
+                    torch.matmul(v, self.weight.data.transpose(0, 1)), dim=1
+                )
             self.u.copy_(u)
+
 
 class SpectralMLP(nn.Module):
     def __init__(self, dim_in: int, dim_out: int, config: dict):
@@ -391,7 +417,8 @@ class SpectralMLP(nn.Module):
 
     def make_activation(self):
         return nn.ReLU(inplace=True)
-    
+
+
 class VanillaMLP(nn.Module):
     def __init__(self, dim_in: int, dim_out: int, config: dict):
         super().__init__()
@@ -430,7 +457,8 @@ class VanillaMLP(nn.Module):
 
     def make_activation(self):
         return nn.ReLU(inplace=True)
-    
+
+
 class VanillaCNN(nn.Module):
     def __init__(self, dim_in: int, dim_out: int, config: dict):
         super().__init__()
@@ -459,10 +487,10 @@ class VanillaCNN(nn.Module):
         # disable autocast
         # strange that the parameters will have empty gradients if autocast is enabled in AMP
         with torch.cuda.amp.autocast(enabled=False):
-            x = x.permute(0,3,1,2)
+            x = x.permute(0, 3, 1, 2)
             x = self.layers(x)
             x = self.output_activation(x)
-            x = x.permute(0,2,3,1)
+            x = x.permute(0, 2, 3, 1)
         return x
 
     def make_conv(self, dim_in, dim_out, is_first, is_last):

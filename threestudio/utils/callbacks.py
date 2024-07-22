@@ -51,9 +51,11 @@ class VersionedCallback(Callback):
             return self.save_root
         return os.path.join(
             self.save_root,
-            self.version
-            if isinstance(self.version, str)
-            else f"version_{self.version}",
+            (
+                self.version
+                if isinstance(self.version, str)
+                else f"version_{self.version}"
+            ),
         )
 
 

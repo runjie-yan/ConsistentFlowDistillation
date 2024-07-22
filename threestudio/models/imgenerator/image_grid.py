@@ -5,11 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import threestudio
-from threestudio.utils.typing import *
 from threestudio.models.imgenerator.base import BaseImgenerator
 from threestudio.models.networks import get_mlp
+from threestudio.utils.typing import *
 
-@threestudio.register('image-grid')
+
+@threestudio.register("image-grid")
 class ImageGrid(BaseImgenerator):
     @dataclass
     class Config(BaseImgenerator.Config):
@@ -25,10 +26,10 @@ class ImageGrid(BaseImgenerator):
                 "n_hidden_layers": 1,
             }
         )
-        init_mode: str = 'normal'
+        init_mode: str = "normal"
 
     cfg: Config
-    
+
     def configure(self):
         super().configure()
         if self.cfg.mlp_decoding:
@@ -39,30 +40,28 @@ class ImageGrid(BaseImgenerator):
             )
         else:
             if self.cfg.n_hidden_dims != self.cfg.n_output_dims:
-                threestudio.warn('n_hidden_dims!=n_output_dims and not mlp decoding, ignore n_output_dims')
-            self.register_module('decoder', None)
-            
+                threestudio.warn(
+                    "n_hidden_dims!=n_output_dims and not mlp decoding, ignore n_output_dims"
+                )
+            self.register_module("decoder", None)
+
         self.embedding = nn.Parameter(
             torch.empty((1, self.cfg.height, self.cfg.width, self.cfg.n_hidden_dims))
         )
         self.reset_parameters()
-        
+
     def reset_parameters(self) -> None:
-        if self.cfg.init_mode == 'normal':
+        if self.cfg.init_mode == "normal":
             nn.init.normal_(self.embedding)
-        elif self.cfg.init_mode == 'zeros':
+        elif self.cfg.init_mode == "zeros":
             nn.init.zeros_(self.embedding)
-    
+
     def regenerate(self, gen_id=None) -> None:
         pass
 
-    def forward(
-        self, **batch
-    ) -> Dict[str, Float[Tensor, "..."]]:
-        B = batch['batch_size']
+    def forward(self, **batch) -> Dict[str, Float[Tensor, "..."]]:
+        B = batch["batch_size"]
         embedding = self.embedding.repeat(B, 1, 1, 1)
         if self.cfg.mlp_decoding:
             embedding = self.decoder(embedding)
-        return {
-            'comp_rgb': embedding
-        }
+        return {"comp_rgb": embedding}

@@ -1,10 +1,11 @@
 import random
 from dataclasses import dataclass, field
 
-import threestudio
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import threestudio
 from threestudio.models.background.base import BaseBackground
 from threestudio.models.networks import get_encoding, get_mlp
 from threestudio.utils.ops import get_activation

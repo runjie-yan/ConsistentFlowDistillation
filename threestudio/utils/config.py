@@ -26,24 +26,24 @@ OmegaConf.register_new_resolver("not", lambda s: not s)
 OmegaConf.register_new_resolver(
     "cmaxgt0orcmaxgt0", lambda a, b: C_max(a) > 0 or C_max(b) > 0
 )
-OmegaConf.register_new_resolver(
-    "gentag", lambda *a: generate_tag(*a)
-)
+OmegaConf.register_new_resolver("gentag", lambda *a: generate_tag(*a))
 # ======================================================= #
 
+
 def generate_tag(*input_list) -> str:
-    tag = ''
+    tag = ""
     is_str_last = None
     for obj in input_list:
         is_str_this = isinstance(obj, str)
         if is_str_last is None or (is_str_last and not is_str_this):
-            tag+=str(obj)
+            tag += str(obj)
         else:
-            tag+='-'
-            tag+=str(obj)
-            
+            tag += "-"
+            tag += str(obj)
+
         is_str_last = is_str_this
     return tag
+
 
 def C_max(value: Any) -> float:
     if isinstance(value, int) or isinstance(value, float):

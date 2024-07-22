@@ -29,17 +29,17 @@ pip install -r requirements-121.txt
 ## Quick Start
 2 stage nerf generation with MVDream and Stable Diffusion
 ```sh
-# with soft shading (at stage 1), requires ~40 GB 
+# with soft shading (at stage 1), requires ~40 GB
 python scripts/run_all_stage.py --prompt "A steampunk owl with mechanical wings"
-# without soft shading, requires ~24 GB  
+# without soft shading, requires ~24 GB
 python scripts/run_all_stage.py --prompt "A steampunk owl with mechanical wings" --raw
 ```
 
 3 stage mesh generation with MVDream and Stable Diffusion
 ```sh
-# with soft shading (at stage 1), requires ~40 GB 
+# with soft shading (at stage 1), requires ~40 GB
 python scripts/run_all_stage.py --prompt "A steampunk owl with mechanical wings" --mesh
-# without soft shading, requires ~24 GB  
+# without soft shading, requires ~24 GB
 python scripts/run_all_stage.py --prompt "A steampunk owl with mechanical wings" --raw --mesh
 ```
 

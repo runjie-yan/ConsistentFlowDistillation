@@ -8,9 +8,10 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 import threestudio
 from threestudio import register
+from threestudio.utils.base import BaseObject
 from threestudio.utils.config import parse_structured
 from threestudio.utils.typing import *
-from threestudio.utils.base import BaseObject
+
 
 @dataclass
 class PlaceholderDataModuleConfig:
@@ -25,9 +26,9 @@ class PlaceholderIterableDataset(BaseObject, IterableDataset):
     @dataclass
     class Config(PlaceholderDataModuleConfig):
         pass
-    
+
     cfg: Config
-    
+
     def configure(self) -> None:
         pass
 
@@ -40,11 +41,11 @@ class PlaceholderIterableDataset(BaseObject, IterableDataset):
         B = self.cfg.batch_size
 
         return {
-            'batch_size': B,
-            'elevation': torch.zeros(B, device=self.device),
-            'azimuth': torch.zeros(B, device=self.device),
-            'camera_distances': torch.ones(B, device=self.device),
-            'c2w':  torch.eye(4, device=self.device)[None].repeat(B,1,1),
+            "batch_size": B,
+            "elevation": torch.zeros(B, device=self.device),
+            "azimuth": torch.zeros(B, device=self.device),
+            "camera_distances": torch.ones(B, device=self.device),
+            "c2w": torch.eye(4, device=self.device)[None].repeat(B, 1, 1),
             "mvp_mtx": None,
         }
 
@@ -53,9 +54,9 @@ class PlaceholderDataset(BaseObject, Dataset):
     @dataclass
     class Config(PlaceholderDataModuleConfig):
         pass
-    
+
     cfg: Config
-    
+
     def configure(self, split: str) -> None:
         self.split = split
 
@@ -73,15 +74,17 @@ class PlaceholderDataset(BaseObject, Dataset):
     def collate(self, batch):
         # sample elevation angles
         batch = torch.utils.data.default_collate(batch)
-        B = batch['index'].shape[0]
-        batch.update({
-            'batch_size': B,
-            'elevation': torch.zeros(B, device=self.device),
-            'azimuth': torch.zeros(B, device=self.device),
-            'camera_distances': torch.ones(B, device=self.device),
-            'c2w':  torch.eye(4, device=self.device)[None].repeat(B,1,1),
-            "mvp_mtx": None,
-        })
+        B = batch["index"].shape[0]
+        batch.update(
+            {
+                "batch_size": B,
+                "elevation": torch.zeros(B, device=self.device),
+                "azimuth": torch.zeros(B, device=self.device),
+                "camera_distances": torch.ones(B, device=self.device),
+                "c2w": torch.eye(4, device=self.device)[None].repeat(B, 1, 1),
+                "mvp_mtx": None,
+            }
+        )
 
         return batch
 

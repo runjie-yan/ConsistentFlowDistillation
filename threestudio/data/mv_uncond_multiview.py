@@ -8,6 +8,8 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset, IterableDataset
+
 from threestudio import register
 from threestudio.data.uncond import (
     RandomCameraDataModuleConfig,
@@ -24,7 +26,6 @@ from threestudio.utils.ops import (
     get_rays,
 )
 from threestudio.utils.typing import *
-from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 
 @dataclass
@@ -40,13 +41,13 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
     @dataclass
     class Config(RandomMultiviewCameraDataModuleConfig):
         pass
-    
+
     cfg: Config
-    
+
     def configure(self, *args, **kwargs):
         super().configure(*args, **kwargs)
         self.zoom_range = self.cfg.zoom_range
-        
+
     def collate(self, batch) -> Dict[str, Any]:
         assert (
             self.batch_size % self.cfg.n_view == 0
@@ -98,7 +99,8 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
         ######## Different from original ########
         # sample fovs from a uniform distribution bounded by fov_range
         fovy_deg: Float[Tensor, "B"] = (
-            torch.rand(real_batch_size, device=self.device) * (self.fovy_range[1] - self.fovy_range[0])
+            torch.rand(real_batch_size, device=self.device)
+            * (self.fovy_range[1] - self.fovy_range[0])
             + self.fovy_range[0]
         ).repeat_interleave(self.cfg.n_view, dim=0)
         fovy = fovy_deg * math.pi / 180
@@ -115,7 +117,8 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
 
         # zoom in by decreasing fov after camera distance is fixed
         zoom: Float[Tensor, "B"] = (
-            torch.rand(real_batch_size, device=self.device) * (self.zoom_range[1] - self.zoom_range[0])
+            torch.rand(real_batch_size, device=self.device)
+            * (self.zoom_range[1] - self.zoom_range[0])
             + self.zoom_range[0]
         ).repeat_interleave(self.cfg.n_view, dim=0)
         fovy = fovy * zoom
@@ -137,19 +140,22 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
         # default scene center at origin
         center: Float[Tensor, "B 3"] = torch.zeros_like(camera_positions)
         # default camera up direction as +z
-        up: Float[Tensor, "B 3"] = torch.as_tensor([0, 0, 1], dtype=torch.float32, device=self.device)[
-            None, :
-        ].repeat(self.batch_size, 1)
+        up: Float[Tensor, "B 3"] = torch.as_tensor(
+            [0, 0, 1], dtype=torch.float32, device=self.device
+        )[None, :].repeat(self.batch_size, 1)
 
         # sample camera perturbations from a uniform distribution [-camera_perturb, camera_perturb]
         camera_perturb: Float[Tensor, "B 3"] = (
-            torch.rand(real_batch_size, 3, device=self.device) * 2 * self.cfg.camera_perturb
+            torch.rand(real_batch_size, 3, device=self.device)
+            * 2
+            * self.cfg.camera_perturb
             - self.cfg.camera_perturb
         ).repeat_interleave(self.cfg.n_view, dim=0)
         camera_positions = camera_positions + camera_perturb
         # sample center perturbations from a normal distribution with mean 0 and std center_perturb
         center_perturb: Float[Tensor, "B 3"] = (
-            torch.randn(real_batch_size, 3, device=self.device) * self.cfg.center_perturb
+            torch.randn(real_batch_size, 3, device=self.device)
+            * self.cfg.center_perturb
         ).repeat_interleave(self.cfg.n_view, dim=0)
         center = center + center_perturb
         # sample up perturbations from a normal distribution with mean 0 and std up_perturb
@@ -197,7 +203,8 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
                 self.cfg.n_view, dim=0
             )  # [-pi, pi]
             light_elevation = (
-                torch.rand(real_batch_size, device=self.device) * math.pi / 3 + math.pi / 6
+                torch.rand(real_batch_size, device=self.device) * math.pi / 3
+                + math.pi / 6
             ).repeat_interleave(
                 self.cfg.n_view, dim=0
             )  # [pi/6, pi/2]
@@ -247,7 +254,9 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
 
         proj_mtx: Float[Tensor, "B 4 4"] = get_projection_matrix(
             fovy, self.width / self.height, 0.1, 1000.0
-        ).to(self.device)  # FIXME: hard-coded near and far
+        ).to(
+            self.device
+        )  # FIXME: hard-coded near and far
         mvp_mtx: Float[Tensor, "B 4 4"] = get_mvp_matrix(c2w, proj_mtx)
 
         return {
@@ -265,11 +274,12 @@ class RandomMultiviewCameraIterableDataset(RandomCameraIterableDataset):
             "fovy": fovy,
         }
 
+
 class RandomMultiviewCameraDataset(RandomCameraDataset):
     @dataclass
     class Config(RandomMultiviewCameraDataModuleConfig):
         pass
-    
+
     cfg: Config
 
 

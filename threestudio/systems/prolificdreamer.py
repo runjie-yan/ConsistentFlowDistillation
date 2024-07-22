@@ -1,18 +1,19 @@
 import os
+import random
 from dataclasses import dataclass, field
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import random
 
 import threestudio
+from threestudio.models.geometry.base import BaseImplicitGeometryGenerator
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
-from threestudio.utils.typing import *
-from threestudio.models.geometry.base import BaseImplicitGeometryGenerator
 from threestudio.utils.timer import freq_timer
+from threestudio.utils.typing import *
+
 
 @threestudio.register("prolificdreamer-system")
 class ProlificDreamer(BaseLift3DSystem):
@@ -21,7 +22,7 @@ class ProlificDreamer(BaseLift3DSystem):
         # in ['coarse', 'geometry', 'texture']
         stage: str = "coarse"
         enable_eval_metirc: bool = False
-        normal_as_rgb_prob: Any = 0.
+        normal_as_rgb_prob: Any = 0.0
 
     cfg: Config
 
@@ -33,31 +34,40 @@ class ProlificDreamer(BaseLift3DSystem):
             self.cfg.prompt_processor
         )
         self.prompt_utils = self.prompt_processor()
-        self.strict_loading = False # FIXME
+        self.strict_loading = False  # FIXME
         self.freq_timer = freq_timer()
         if self.cfg.enable_eval_metirc:
             from torchmetrics.multimodal.clip_score import CLIPScore
+
             # to keep on cpu
             self.metrics = {
-                "CLIP_B16": CLIPScore(model_name_or_path="openai/clip-vit-base-patch16"),
-                "CLIP_B32": CLIPScore(model_name_or_path="openai/clip-vit-base-patch32"),
-                "CLIP_L14": CLIPScore(model_name_or_path="openai/clip-vit-large-patch14"),
-                "CLIP_L14_336": CLIPScore(model_name_or_path="openai/clip-vit-large-patch14-336"),
+                "CLIP_B16": CLIPScore(
+                    model_name_or_path="openai/clip-vit-base-patch16"
+                ),
+                "CLIP_B32": CLIPScore(
+                    model_name_or_path="openai/clip-vit-base-patch32"
+                ),
+                "CLIP_L14": CLIPScore(
+                    model_name_or_path="openai/clip-vit-large-patch14"
+                ),
+                "CLIP_L14_336": CLIPScore(
+                    model_name_or_path="openai/clip-vit-large-patch14-336"
+                ),
             }
-            
+
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
         self.normal_as_rgb_prob = self.C(self.cfg.normal_as_rgb_prob)
-    
+
     def forward(self, batch: Dict[str, Any], vis=False) -> Dict[str, Any]:
         if self.cfg.stage == "geometry":
             render_out = self.renderer(**batch, render_rgb=False)
         else:
             render_out = self.renderer(**batch)
         if not vis and random.random() < self.normal_as_rgb_prob:
-            if 'comp_normal' in render_out:
-                render_out['comp_rgb'] = render_out['comp_normal'] 
+            if "comp_normal" in render_out:
+                render_out["comp_rgb"] = render_out["comp_normal"]
             else:
-                threestudio.warn('do not found normal in render output')
+                threestudio.warn("do not found normal in render output")
         return {
             **render_out,
         }
@@ -77,21 +87,21 @@ class ProlificDreamer(BaseLift3DSystem):
             guidance_inp = out["comp_rgb"]
         schedule_out = self.t_scheduler(guidance_inp.shape[0])
         guidance_out = self.guidance(
-            guidance_inp, 
-            self.prompt_utils, 
-            **batch, 
-            **schedule_out, 
-            **noise_out, 
-            rgb_as_latents=False, 
+            guidance_inp,
+            self.prompt_utils,
+            **batch,
+            **schedule_out,
+            **noise_out,
+            rgb_as_latents=False,
         )
 
         loss = 0.0
-            
+
         self.log("training_speed", self.freq_timer.get_freq())
         self.log("train_params/noise_sqrt_beta", self.noise_generator.sqrt_beta)
         for name, value in self.cfg.loss.items():
             self.log(f"train_params/{name}", self.C(value))
-            
+
         for name, value in guidance_out.items():
             if not (type(value) is torch.Tensor and value.numel() > 1):
                 self.log(f"train/{name}", value)
@@ -104,7 +114,7 @@ class ProlificDreamer(BaseLift3DSystem):
             loss_z_variance = out["z_variance"][out["opacity"] > 0.5].mean()
             self.log("train/loss_z_variance", loss_z_variance)
             loss += loss_z_variance * self.C(self.cfg.loss.lambda_z_variance)
-            
+
         if self.cfg.stage == "coarse":
             if self.C(self.cfg.loss.lambda_orient) > 0:
                 if "normal" not in out:
@@ -126,7 +136,6 @@ class ProlificDreamer(BaseLift3DSystem):
             loss_opaque = binary_cross_entropy(opacity_clamped, opacity_clamped)
             self.log("train/loss_opaque", loss_opaque)
             loss += loss_opaque * self.C(self.cfg.loss.lambda_opaque)
-
 
             # sdf loss
             if "sdf_grad" in out:
@@ -158,9 +167,9 @@ class ProlificDreamer(BaseLift3DSystem):
         if loss.isnan():
             threestudio.warn("loss is NaN, stop running")
             exit(1)
-                  
+
         return {"loss": loss}
-    
+
     def on_validation_epoch_start(self) -> None:
         if self.cfg.enable_eval_metirc:
             for mtc_name, metirc in self.metrics.items():
@@ -177,26 +186,30 @@ class ProlificDreamer(BaseLift3DSystem):
             guidance_inp = out["comp_rgb"]
         schedule_out = self.t_scheduler(guidance_inp.shape[0])
         guidance_out = self.guidance(
-            guidance_inp, 
-            self.prompt_utils, 
-            **batch, 
+            guidance_inp,
+            self.prompt_utils,
+            **batch,
             **schedule_out,
             **noise_out,
-            rgb_as_latents=False, 
+            rgb_as_latents=False,
             return_rgb_1step_orig=True,
         )
         # metric evaluation
         if self.cfg.enable_eval_metirc:
             with torch.no_grad():
                 prompt = self.prompt_utils.prompt
-                clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                 for mtc_name, metirc in self.metrics.items():
-                    self.log(f"metric/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-        
+                    self.log(
+                        f"metric/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max"
+                    )
+
         self.save_image_grid(
-            f"train/it{self.true_global_step}-{batch['index'][0]}.png" 
-            if not batch['index'][0]==0 else 
-            f"train-video/{self.true_global_step}.png",
+            (
+                f"train/it{self.true_global_step}-{batch['index'][0]}.png"
+                if not batch["index"][0] == 0
+                else f"train-video/{self.true_global_step}.png"
+            ),
             (
                 [
                     {
@@ -223,10 +236,10 @@ class ProlificDreamer(BaseLift3DSystem):
                 {
                     "type": "rgb",
                     "img": F.interpolate(
-                        noise_out['noise'][:, :3],
-                        (512,512),
+                        noise_out["noise"][:, :3],
+                        (512, 512),
                         mode="nearest",
-                    ).permute(0,2,3,1)[0],
+                    ).permute(0, 2, 3, 1)[0],
                     "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                 }
             ]
@@ -234,11 +247,11 @@ class ProlificDreamer(BaseLift3DSystem):
                 {
                     "type": "grayscale",
                     "img": F.interpolate(
-                        noise_out['det_mask'].float(),
-                        (512,512),
+                        noise_out["det_mask"].float(),
+                        (512, 512),
                         mode="nearest",
-                    ).permute(0,2,3,1)[0,:,:,0],
-                    "kwargs": {"cmap": None, "data_range": (0., 1.)},
+                    ).permute(0, 2, 3, 1)[0, :, :, 0],
+                    "kwargs": {"cmap": None, "data_range": (0.0, 1.0)},
                 },
             ]
             # + (
@@ -306,11 +319,11 @@ class ProlificDreamer(BaseLift3DSystem):
         if self.cfg.enable_eval_metirc:
             for mtc_name, metirc in self.metrics.items():
                 self.metrics[mtc_name] = metirc.to(self.device)
-            
+
     def test_step(self, batch, batch_idx):
         # if isinstance(self.geometry, BaseImplicitGeometryGenerator):
         #     self.geometry.regenerate()
-        self.t_scheduler.set_min_max_steps(0.4,0.4)
+        self.t_scheduler.set_min_max_steps(0.4, 0.4)
         out = self(batch, vis=True)
         noise_out = self.noise_generator(out, batch)
         if self.cfg.stage == "geometry":
@@ -321,12 +334,12 @@ class ProlificDreamer(BaseLift3DSystem):
         if self.cfg.stage != "texture":
             try:
                 guidance_out = self.guidance(
-                    guidance_inp, 
-                    self.prompt_utils, 
-                    **batch, 
+                    guidance_inp,
+                    self.prompt_utils,
+                    **batch,
                     **schedule_out,
                     **noise_out,
-                    rgb_as_latents=False, 
+                    rgb_as_latents=False,
                     return_rgb_1step_orig=True,
                 )
             except AttributeError:
@@ -337,10 +350,14 @@ class ProlificDreamer(BaseLift3DSystem):
         if self.cfg.enable_eval_metirc:
             with torch.no_grad():
                 prompt = self.prompt_utils.prompt
-                clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                 for mtc_name, metirc in self.metrics.items():
-                    self.log(f"metric-test/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-                    
+                    self.log(
+                        f"metric-test/{mtc_name}",
+                        metirc(clip_img, prompt),
+                        reduce_fx="max",
+                    )
+
         self.save_image_grid(
             f"it{self.true_global_step}-test/{batch['index'][0]}.png",
             (
@@ -370,10 +387,10 @@ class ProlificDreamer(BaseLift3DSystem):
                     {
                         "type": "rgb",
                         "img": F.interpolate(
-                            noise_out['noise'][:, :3],
-                            (512,512),
+                            noise_out["noise"][:, :3],
+                            (512, 512),
                             mode="nearest",
-                        ).permute(0,2,3,1)[0],
+                        ).permute(0, 2, 3, 1)[0],
                         "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                     }
                 ]

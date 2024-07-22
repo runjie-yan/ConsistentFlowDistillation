@@ -187,13 +187,14 @@ class BaseImplicitGeometry(BaseGeometry):
             mesh = self._isosurface(self.bbox)
         return mesh
 
+
 class BaseImplicitGeometryGenerator(BaseImplicitGeometry):
     @dataclass
     class Config(BaseImplicitGeometry.Config):
         pass
 
     cfg: Config
-    
+
     def regenerate(self, gen_id=None) -> None:
         raise NotImplementedError
 
@@ -214,7 +215,6 @@ class BaseImplicitGeometryGenerator(BaseImplicitGeometry):
     ) -> Float[Tensor, "*N 1"]:
         # return the value of the implicit field, where the zero level set represents the surface
         raise NotImplementedError
-
 
 
 class BaseExplicitGeometry(BaseGeometry):

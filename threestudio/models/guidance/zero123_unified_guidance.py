@@ -392,9 +392,9 @@ class Zero123UnifiedGuidance(BaseModule):
                         ],
                         dim=0,
                     ),
-                    cross_attention_kwargs={"scale": 0.0}
-                    if self.vsd_share_model
-                    else None,
+                    cross_attention_kwargs=(
+                        {"scale": 0.0} if self.vsd_share_model else None
+                    ),
                     velocity_to_epsilon=self.pipe.scheduler.config.prediction_type
                     == "v_prediction",
                 )
@@ -433,15 +433,17 @@ class Zero123UnifiedGuidance(BaseModule):
                 ),
                 torch.cat([t] * 2, dim=0),
                 encoder_hidden_states=torch.cat([image_camera_embeddings] * 2, dim=0),
-                class_labels=torch.cat(
-                    [
-                        camera_condition.view(batch_size, -1),
-                        torch.zeros_like(camera_condition.view(batch_size, -1)),
-                    ],
-                    dim=0,
-                )
-                if self.cfg.vsd_use_camera_condition
-                else None,
+                class_labels=(
+                    torch.cat(
+                        [
+                            camera_condition.view(batch_size, -1),
+                            torch.zeros_like(camera_condition.view(batch_size, -1)),
+                        ],
+                        dim=0,
+                    )
+                    if self.cfg.vsd_use_camera_condition
+                    else None
+                ),
                 cross_attention_kwargs={"scale": 1.0},
                 velocity_to_epsilon=self.pipe_phi.scheduler.config.prediction_type
                 == "v_prediction",
@@ -502,11 +504,13 @@ class Zero123UnifiedGuidance(BaseModule):
             encoder_hidden_states=image_camera_embeddings.repeat(
                 self.cfg.vsd_lora_n_timestamp_samples, 1, 1
             ),
-            class_labels=camera_condition.view(B, -1).repeat(
-                self.cfg.vsd_lora_n_timestamp_samples, 1
-            )
-            if self.cfg.vsd_use_camera_condition
-            else None,
+            class_labels=(
+                camera_condition.view(B, -1).repeat(
+                    self.cfg.vsd_lora_n_timestamp_samples, 1
+                )
+                if self.cfg.vsd_use_camera_condition
+                else None
+            ),
             cross_attention_kwargs={"scale": 1.0},
         )
         return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
@@ -676,9 +680,9 @@ class Zero123UnifiedGuidance(BaseModule):
                         image_latents=self.image_latents.repeat(batch_size, 1, 1, 1).to(
                             pipe.unet.dtype
                         ),
-                        cross_attention_kwargs={"scale": 0.0}
-                        if self.vsd_share_model
-                        else None,
+                        cross_attention_kwargs=(
+                            {"scale": 0.0} if self.vsd_share_model else None
+                        ),
                         output_type="latent",
                     ).images.to(latents.dtype)
             with torch.no_grad():

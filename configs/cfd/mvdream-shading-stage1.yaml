@@ -66,7 +66,7 @@ system:
     return_intermediate: true
     train_gradient_budget: 13_000_000
     train_chunk_size: 32_768
-    
+
   noise_generator_type: "triplane-noise-generator"
   noise_generator:
     # 0(random)-1(determined)

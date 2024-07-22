@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 
-import threestudio
 import torch
 import torch.nn.functional as F
+
+import threestudio
 from threestudio.models.background.base import BaseBackground
 from threestudio.models.geometry.base import BaseImplicitGeometry
 from threestudio.models.materials.base import BaseMaterial

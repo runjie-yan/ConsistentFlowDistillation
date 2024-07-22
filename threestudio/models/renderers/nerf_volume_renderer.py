@@ -13,7 +13,12 @@ from threestudio.models.materials.base import BaseMaterial
 from threestudio.models.networks import create_network_with_input_encoding
 from threestudio.models.renderers.base import VolumeRenderer
 from threestudio.systems.utils import parse_optimizer, parse_scheduler_to_instance
-from threestudio.utils.ops import chunk_batch, get_activation, validate_empty_rays, chunk_batch_seq
+from threestudio.utils.ops import (
+    chunk_batch,
+    chunk_batch_seq,
+    get_activation,
+    validate_empty_rays,
+)
 from threestudio.utils.typing import *
 
 
@@ -23,7 +28,7 @@ class NeRFVolumeRenderer(VolumeRenderer):
     class Config(VolumeRenderer.Config):
         num_samples_per_ray: int = 512
         eval_chunk_size: int = 160000
-        train_chunk_num: int = 0 # set >0 to enable checkpointing
+        train_chunk_num: int = 0  # set >0 to enable checkpointing
         randomized: bool = True
 
         near_plane: float = 0.0
@@ -294,9 +299,7 @@ class NeRFVolumeRenderer(VolumeRenderer):
                     **geo_out,
                     **kwargs
                 )
-                comp_rgb_bg = chunk_batch_seq(
-                    self.background, chunk_num, dirs=rays_d
-                )
+                comp_rgb_bg = chunk_batch_seq(self.background, chunk_num, dirs=rays_d)
             else:
                 geo_out = self.geometry(
                     positions, output_normal=self.material.requires_normal

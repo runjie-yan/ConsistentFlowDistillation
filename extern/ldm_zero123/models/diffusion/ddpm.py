@@ -1457,9 +1457,11 @@ class LatentDiffusion(DDPM):
         if cond is not None:
             if isinstance(cond, dict):
                 cond = {
-                    key: cond[key][:batch_size]
-                    if not isinstance(cond[key], list)
-                    else list(map(lambda x: x[:batch_size], cond[key]))
+                    key: (
+                        cond[key][:batch_size]
+                        if not isinstance(cond[key], list)
+                        else list(map(lambda x: x[:batch_size], cond[key]))
+                    )
                     for key in cond
                 }
             else:
@@ -1606,9 +1608,11 @@ class LatentDiffusion(DDPM):
         if cond is not None:
             if isinstance(cond, dict):
                 cond = {
-                    key: cond[key][:batch_size]
-                    if not isinstance(cond[key], list)
-                    else list(map(lambda x: x[:batch_size], cond[key]))
+                    key: (
+                        cond[key][:batch_size]
+                        if not isinstance(cond[key], list)
+                        else list(map(lambda x: x[:batch_size], cond[key]))
+                    )
                     for key in cond
                 }
             else:

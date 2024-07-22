@@ -3,15 +3,14 @@ from dataclasses import dataclass, field
 from typing import List
 
 import numpy as np
-import threestudio
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers import (
-    AutoencoderKL,
-)
+from diffusers import AutoencoderKL
 from mvdream.camera_utils import convert_opengl_to_blender, normalize_camera
 from mvdream.model_zoo import build_model
+
+import threestudio
 from threestudio.models.prompt_processors.base import PromptProcessorOutput
 from threestudio.utils.base import BaseObject
 from threestudio.utils.misc import C, cleanup, parse_version
@@ -84,7 +83,7 @@ class MultiviewDiffusionGuidance(BaseObject):
     def set_min_max_steps(self, min_step_percent=0.02, max_step_percent=0.98):
         self.min_step = int(self.num_train_timesteps * min_step_percent)
         self.max_step = int(self.num_train_timesteps * max_step_percent)
-        
+
     def encode_images(
         self, imgs: Float[Tensor, "B 3 256 256"]
     ) -> Float[Tensor, "B 4 32 32"]:
@@ -125,9 +124,11 @@ class MultiviewDiffusionGuidance(BaseObject):
 
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
 
-        t_ref = torch.round(self.num_train_timesteps*t_perc_ref).to(dtype=torch.long,device=self.device)
+        t_ref = torch.round(self.num_train_timesteps * t_perc_ref).to(
+            dtype=torch.long, device=self.device
+        )
         t_ref_single = t_ref[:1]
-        
+
         if text_embeddings is None:
             text_embeddings = prompt_utils.get_text_embeddings(
                 elevation, azimuth, camera_distances, self.cfg.view_dependent_prompting
@@ -162,7 +163,7 @@ class MultiviewDiffusionGuidance(BaseObject):
             latents_noisy = self.model.q_sample(latents, t_ref_single, noise)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
-            t_ref_input = torch.cat([t_ref]*2)
+            t_ref_input = torch.cat([t_ref] * 2)
             # save input tensors for UNet
             if camera is not None:
                 camera = self.get_camera_cond(camera, fovy)
@@ -174,7 +175,9 @@ class MultiviewDiffusionGuidance(BaseObject):
                 }
             else:
                 context = {"context": text_embeddings}
-            noise_pred = self.model.apply_model(latent_model_input, t_ref_input, context)
+            noise_pred = self.model.apply_model(
+                latent_model_input, t_ref_input, context
+            )
 
         # perform guidance
         noise_pred_text, noise_pred_uncond = noise_pred.chunk(
@@ -222,7 +225,7 @@ class MultiviewDiffusionGuidance(BaseObject):
             grad = torch.autograd.grad(loss, latents, retain_graph=True)[0]
 
         else:
-            grad = (noise_pred - noise)
+            grad = noise_pred - noise
 
         # clip grad for stable training?
         if self.grad_clip_val is not None:
@@ -243,11 +246,15 @@ class MultiviewDiffusionGuidance(BaseObject):
             if self.cfg.use_img_loss == "decode":
                 with torch.no_grad():
                     rgb_target = self.decode_latents(latents)
-                loss_sd_img = 0.5 * F.mse_loss(pred_rgb, rgb_target, reduction="sum") / latents.shape[0]
+                loss_sd_img = (
+                    0.5
+                    * F.mse_loss(pred_rgb, rgb_target, reduction="sum")
+                    / latents.shape[0]
+                )
             else:
                 raise ValueError
             guidance_out.update({"loss_sd_img": loss_sd_img})
-            
+
         return guidance_out
 
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):

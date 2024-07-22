@@ -50,7 +50,7 @@ system:
   background:
     color_activation: sigmoid
     random_aug: true
- 
+
   renderer_type: "nerf-volume-renderer"
   renderer:
     radius: ${system.geometry.radius}

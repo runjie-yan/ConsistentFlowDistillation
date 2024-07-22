@@ -8,9 +8,9 @@ import torch.nn.functional as F
 import threestudio
 from threestudio.models.background.base import BaseBackground
 from threestudio.models.networks import get_encoding, get_mlp
+from threestudio.utils.misc import C, get_device
 from threestudio.utils.ops import get_activation
 from threestudio.utils.typing import *
-from threestudio.utils.misc import C, get_device
 
 
 @threestudio.register("neural-environment-map-background")
@@ -46,7 +46,9 @@ class NeuralEnvironmentMapBackground(BaseBackground):
 
     def forward(self, dirs: Float[Tensor, "B H W 3"]) -> Float[Tensor, "B H W Nc"]:
         if not self.training and self.cfg.eval_color is not None:
-            return torch.ones(*dirs.shape[:-1], self.cfg.n_output_dims, device=self.device) * torch.as_tensor(self.cfg.eval_color, device=self.device)
+            return torch.ones(
+                *dirs.shape[:-1], self.cfg.n_output_dims, device=self.device
+            ) * torch.as_tensor(self.cfg.eval_color, device=self.device)
         # viewdirs must be normalized before passing to this function
         dirs = (dirs + 1.0) / 2.0  # (-1, 1) => (0, 1)
         dirs_embd = self.encoding(dirs.view(-1, 3))
@@ -59,10 +61,11 @@ class NeuralEnvironmentMapBackground(BaseBackground):
         ):
             # use random background color with probability random_aug_prob
             color = color * 0 + (  # prevent checking for unused parameters in DDP
-                torch.rand(dirs.shape[0], 1, 1, self.cfg.n_output_dims, device=self.device)
-                .expand(*dirs.shape[:-1], -1)
+                torch.rand(
+                    dirs.shape[0], 1, 1, self.cfg.n_output_dims, device=self.device
+                ).expand(*dirs.shape[:-1], -1)
             )
         return color
-    
+
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
         self.random_aug_prob = C(self.cfg.random_aug_prob, epoch, global_step)

@@ -55,7 +55,7 @@ system:
   background:
     color_activation: sigmoid
     random_aug: true
- 
+
   renderer_type: "nerf-volume-renderer-with-budget"
   renderer:
     return_comp_normal: true

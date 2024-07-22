@@ -49,7 +49,7 @@ system:
   background:
     color_activation: sigmoid
     random_aug: false
- 
+
   renderer_type: "nvdiff-rasterizer"
   renderer:
     context_type: cuda

@@ -8,8 +8,8 @@ import torch.nn.functional as F
 from diffusers import (
     AutoencoderKL,
     ControlNetModel,
-    DDPMScheduler,
     DDIMScheduler,
+    DDPMScheduler,
     DPMSolverSinglestepScheduler,
     StableDiffusionPipeline,
     UNet2DConditionModel,
@@ -92,10 +92,10 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         # )
         # trainer_max_steps: int = 25000
         use_img_loss: Optional[str] = None  # works with most cases
-        reduction: str = 'l2' # TODO: choose l1?
-        
-        sds_guidance_scale: float = 0.
-        
+        reduction: str = "l2"  # TODO: choose l1?
+
+        sds_guidance_scale: float = 0.0
+
         vsd_blur: int = 0
 
     cfg: Config
@@ -202,11 +202,11 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 self.lora_layers._load_state_dict_pre_hooks.clear()
                 self.lora_layers._state_dict_hooks.clear()
 
-        if self.cfg.reduction == 'l1':
+        if self.cfg.reduction == "l1":
             self.loss_fn = nn.L1Loss(reduction="sum")
-        elif self.cfg.reduction == 'l2':
+        elif self.cfg.reduction == "l2":
             self.loss_fn = nn.MSELoss(reduction="sum")
-        elif self.cfg.reduction == 'l15':
+        elif self.cfg.reduction == "l15":
             self.loss_fn = lambda x, y: torch.sum(torch.abs(x - y) ** 1.5)
         else:
             raise ValueError
@@ -245,7 +245,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             pipe_phi=pipe_phi,
             controlnet=controlnet,
         )
-        
+
         self.w_factor = 1.0
 
     @property
@@ -403,9 +403,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                         torch.cat([latents_noisy] * 4, dim=0),
                         torch.cat([t] * 4, dim=0),
                         encoder_hidden_states=text_embeddings,
-                        cross_attention_kwargs={"scale": 0.0}
-                        if self.vsd_share_model
-                        else None,
+                        cross_attention_kwargs=(
+                            {"scale": 0.0} if self.vsd_share_model else None
+                        ),
                         velocity_to_epsilon=self.pipe.scheduler.config.prediction_type
                         == "v_prediction",
                     )  # (4B, 3, Hl, Wl)
@@ -423,9 +423,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                     -1, 1, 1, 1
                 ) * perpendicular_component(e_i_neg, e_pos)
 
-            noise_pred = noise_pred_uncond + self.guidance_scale * (
-                e_pos + accum_grad
-            )
+            noise_pred = noise_pred_uncond + self.guidance_scale * (e_pos + accum_grad)
         else:
             text_embeddings = prompt_utils.get_text_embeddings(
                 elevation, azimuth, camera_distances, self.cfg.view_dependent_prompting
@@ -437,9 +435,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                         torch.cat([latents_noisy] * 2, dim=0),
                         torch.cat([t] * 2, dim=0),
                         encoder_hidden_states=text_embeddings,
-                        cross_attention_kwargs={"scale": 0.0}
-                        if self.vsd_share_model
-                        else None,
+                        cross_attention_kwargs=(
+                            {"scale": 0.0} if self.vsd_share_model else None
+                        ),
                         velocity_to_epsilon=self.pipe.scheduler.config.prediction_type
                         == "v_prediction",
                     )
@@ -477,15 +475,17 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 torch.cat([latents_noisy] * 2, dim=0),
                 torch.cat([t] * 2, dim=0),
                 encoder_hidden_states=torch.cat([text_embeddings] * 2, dim=0),
-                class_labels=torch.cat(
-                    [
-                        camera_condition.view(batch_size, -1),
-                        torch.zeros_like(camera_condition.view(batch_size, -1)),
-                    ],
-                    dim=0,
-                )
-                if self.cfg.vsd_use_camera_condition
-                else None,
+                class_labels=(
+                    torch.cat(
+                        [
+                            camera_condition.view(batch_size, -1),
+                            torch.zeros_like(camera_condition.view(batch_size, -1)),
+                        ],
+                        dim=0,
+                    )
+                    if self.cfg.vsd_use_camera_condition
+                    else None
+                ),
                 cross_attention_kwargs={"scale": 1.0},
                 velocity_to_epsilon=self.pipe_phi.scheduler.config.prediction_type
                 == "v_prediction",
@@ -509,8 +509,8 @@ class StableDiffusionUnifiedGuidance(BaseModule):
     ):
         B = latents.shape[0]
         if self.cfg.vsd_blur > 0:
-            pad_size = self.cfg.vsd_blur//2
-            kernel_size = pad_size*2+1
+            pad_size = self.cfg.vsd_blur // 2
+            kernel_size = pad_size * 2 + 1
             smooth_pool = nn.AvgPool2d(kernel_size, stride=1, padding=pad_size)
             latents = smooth_pool(latents)
         latents = latents.detach().repeat(
@@ -556,17 +556,20 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             encoder_hidden_states=text_embeddings.repeat(
                 self.cfg.vsd_lora_n_timestamp_samples, 1, 1
             ),
-            class_labels=camera_condition.view(B, -1).repeat(
-                self.cfg.vsd_lora_n_timestamp_samples, 1
-            )
-            if self.cfg.vsd_use_camera_condition
-            else None,
+            class_labels=(
+                camera_condition.view(B, -1).repeat(
+                    self.cfg.vsd_lora_n_timestamp_samples, 1
+                )
+                if self.cfg.vsd_use_camera_condition
+                else None
+            ),
             cross_attention_kwargs={"scale": 1.0},
         )
         return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 
     def forward(
-        self, rgb,
+        self,
+        rgb,
         prompt_utils: PromptProcessorOutput,
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
@@ -575,10 +578,10 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         c2w: Float[Tensor, "B 4 4"],
         t_perc_ref: Float[Tensor, "B"],
         rgb_as_latents=False,
-        noise: Float[Tensor, "NB 4 64 64"]=None,
-        return_rgb_1step_orig: bool=False,
-        return_rgb_multistep_orig: bool=False,
-        t_perc_tgt: Optional[Float[Tensor, "B"]]=None,
+        noise: Float[Tensor, "NB 4 64 64"] = None,
+        return_rgb_1step_orig: bool = False,
+        return_rgb_multistep_orig: bool = False,
+        t_perc_tgt: Optional[Float[Tensor, "B"]] = None,
         **kwargs,
     ):
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
@@ -603,7 +606,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             with torch.no_grad():
                 rgb_ref_BCHW_512 = rgb_BCHW_512.detach()
                 latents_ref = latents.detach()
-        
+
         batch_size = latents.shape[0]
         latents: Float[Tensor, "B 4 Hl Wl"]
         latents_ref: Float[Tensor, "B 4 Hl Wl"]
@@ -613,20 +616,30 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         if self.cfg.consistency_training:
             assert t_perc_tgt is not None
 
-        t_ref = torch.round(self.num_train_timesteps*t_perc_ref).to(dtype=torch.long,device=self.device)
+        t_ref = torch.round(self.num_train_timesteps * t_perc_ref).to(
+            dtype=torch.long, device=self.device
+        )
         if t_perc_tgt is not None:
-            t_tgt = torch.round(self.num_train_timesteps*t_perc_tgt).to(dtype=torch.long,device=self.device)
-        
+            t_tgt = torch.round(self.num_train_timesteps * t_perc_tgt).to(
+                dtype=torch.long, device=self.device
+            )
+
         latents_noisy = self.scheduler.add_noise(latents_ref, noise, t_ref)
 
         eps_pretrain, eps_pretrain_img, pretrain_pred_utils = self.get_eps_pretrain(
-            latents_noisy, t_ref, prompt_utils, elevation, azimuth, camera_distances, noise=noise
+            latents_noisy,
+            t_ref,
+            prompt_utils,
+            elevation,
+            azimuth,
+            camera_distances,
+            noise=noise,
         )
 
         if self.cfg.guidance_type in "sds":
             eps_phi = noise
             if self.guidance_scale > 100.1:
-                eps_phi = pretrain_pred_utils['noise_pred_uncond']
+                eps_phi = pretrain_pred_utils["noise_pred_uncond"]
         elif self.cfg.guidance_type == "vsd":
             if self.cfg.vsd_camera_condition_type == "extrinsics":
                 camera_condition = c2w
@@ -646,9 +659,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 raise ValueError(
                     f"Unknown camera_condition_type {self.cfg.vsd_camera_condition_type}"
                 )
-                
+
             latents_noisy_vsd = latents_noisy
-                
+
             eps_phi = self.get_eps_phi(
                 latents_noisy_vsd,
                 t_ref,
@@ -660,7 +673,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             )
 
             loss_train_phi = self.train_phi(
-                latents, # FIXME: ref or org?
+                latents,  # FIXME: ref or org?
                 prompt_utils,
                 elevation,
                 azimuth,
@@ -672,9 +685,13 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             if self.cfg.ct_weighting_strategy == "gt":
                 w = self.lambdas[t_ref].view(-1, 1, 1, 1)
             else:
-                w = ((self.lambdas[t_ref]-self.lambdas[t_tgt])*self.w_factor).view(-1, 1, 1, 1)
+                w = ((self.lambdas[t_ref] - self.lambdas[t_tgt]) * self.w_factor).view(
+                    -1, 1, 1, 1
+                )
         elif self.cfg.weighting_strategy == "dmd":
-            w = 1.0 / (1e-8+(eps_pretrain-noise).abs().mean(dim=[1,2,3], keepdim=True))
+            w = 1.0 / (
+                1e-8 + (eps_pretrain - noise).abs().mean(dim=[1, 2, 3], keepdim=True)
+            )
         elif self.cfg.weighting_strategy == "dreamfusion":
             w = (1.0 - self.alphas[t_ref]).view(-1, 1, 1, 1)
         elif self.cfg.weighting_strategy == "uniform":
@@ -692,16 +709,18 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)
 
         grad = torch.nan_to_num(grad)
-        
+
         # compute decoded image if needed for visualization/img loss
-        return_rgb_1step_orig = self.cfg.return_rgb_1step_orig or return_rgb_1step_orig or (self.cfg.use_img_loss in ["gt"])
+        return_rgb_1step_orig = (
+            self.cfg.return_rgb_1step_orig
+            or return_rgb_1step_orig
+            or (self.cfg.use_img_loss in ["gt"])
+        )
         if return_rgb_1step_orig:
             with torch.no_grad():
-                latents_1step_orig = (
-                    latents - self.sigmas[t_ref].view(-1, 1, 1, 1)
-                    / self.alphas[t_ref].view(-1, 1, 1, 1)
-                    * (eps_pretrain_img - eps_phi)
-                )
+                latents_1step_orig = latents - self.sigmas[t_ref].view(
+                    -1, 1, 1, 1
+                ) / self.alphas[t_ref].view(-1, 1, 1, 1) * (eps_pretrain_img - eps_phi)
                 image_denoised_pretrain = self.vae_decode(
                     self.pipe.vae, latents_1step_orig
                 )
@@ -751,10 +770,12 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             # "cfg_norm": cfg_norm,
         }
         if self.cfg.consistency_training:
-            guidance_out.update({
-                "timesteps_target": t_tgt,
-                "lambdas_target": self.lambdas[t_tgt],
-            })
+            guidance_out.update(
+                {
+                    "timesteps_target": t_tgt,
+                    "lambdas_target": self.lambdas[t_tgt],
+                }
+            )
 
         # image-space loss proposed in HiFA: https://hifa-team.github.io/HiFA-site
         if self.cfg.use_img_loss is not None:
@@ -779,9 +800,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             if self.cfg.use_img_loss == "decode":
                 with torch.no_grad():
                     rgb_target = self.vae_decode(self.pipe.vae, latents)
-                loss_sd_img = (
-                    self.loss_fn(rgb_BCHW_512, rgb_target) / batch_size
-                )
+                loss_sd_img = self.loss_fn(rgb_BCHW_512, rgb_target) / batch_size
             elif self.cfg.use_img_loss == "gt":
                 loss_sd_img = (
                     self.loss_fn(rgb_BCHW_512, image_denoised_pretrain) / batch_size
@@ -792,9 +811,11 @@ class StableDiffusionUnifiedGuidance(BaseModule):
 
         if return_rgb_1step_orig:
             guidance_out.update({"rgb_1step_orig": rgb_1step_orig})
-            guidance_out.update({"rgb_1step_orig_phi": rgb_1step_orig_phi}) # DEV
+            guidance_out.update({"rgb_1step_orig_phi": rgb_1step_orig_phi})  # DEV
 
-        return_rgb_multistep_orig = return_rgb_multistep_orig or self.cfg.return_rgb_multistep_orig
+        return_rgb_multistep_orig = (
+            return_rgb_multistep_orig or self.cfg.return_rgb_multistep_orig
+        )
         if return_rgb_multistep_orig:
             with self.set_scheduler(
                 self.pipe,
@@ -819,9 +840,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                         negative_prompt_embeds=text_embeddings_uncond.to(
                             pipe.unet.dtype
                         ),
-                        cross_attention_kwargs={"scale": 0.0}
-                        if self.vsd_share_model
-                        else None,
+                        cross_attention_kwargs=(
+                            {"scale": 0.0} if self.vsd_share_model else None
+                        ),
                         output_type="latent",
                     ).images.to(latents.dtype)
             with torch.no_grad():
@@ -856,7 +877,10 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         if self.cfg.grad_clip is not None:
             self.grad_clip_val = C(self.cfg.grad_clip, epoch, global_step)
 
-        if isinstance(self.cfg.ct_weighting_strategy, str) or self.cfg.ct_weighting_strategy is None:
+        if (
+            isinstance(self.cfg.ct_weighting_strategy, str)
+            or self.cfg.ct_weighting_strategy is None
+        ):
             self.w_factor = 1.0
         else:
             self.w_factor = C(self.cfg.ct_weighting_strategy, epoch, global_step)

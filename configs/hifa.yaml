@@ -51,7 +51,7 @@ system:
   renderer:
     radius: ${system.geometry.radius}
     num_samples_per_ray: 512
-    
+
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"

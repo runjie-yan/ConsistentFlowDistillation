@@ -105,7 +105,7 @@ class ImplicitVolume(BaseImplicitGeometry):
         raw_density: Float[Tensor, "*N 1"] = density + density_bias
         density = get_activation(self.cfg.density_activation)(raw_density)
         return raw_density, density
-    
+
     def get_enc(self, points: Float[Tensor, "*N Di"]):
         return self.encoding(points)
 

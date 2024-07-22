@@ -198,7 +198,7 @@ class StableDiffusionGuidance(BaseObject):
         elevation: Float[Tensor, "B"],
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
-        noise: Float[Tensor, "B 4 64 64"]=None,
+        noise: Float[Tensor, "B 4 64 64"] = None,
     ):
         batch_size = elevation.shape[0]
 
@@ -273,16 +273,26 @@ class StableDiffusionGuidance(BaseObject):
         grad = noise_pred - noise
         with torch.no_grad():
             if self.cfg.use_tp_img_loss:
-                dec_batch = torch.cat([latents, latents_denoised_text, latents_denoised_uncond], dim=0)
-                image, image_denoised_text, image_denoised_uncond = self.decode_latents(dec_batch).chunk(3)
-                image_denoised = image_denoised_text + self.cfg.guidance_scale_img * (image_denoised_text - image_denoised_uncond)
+                dec_batch = torch.cat(
+                    [latents, latents_denoised_text, latents_denoised_uncond], dim=0
+                )
+                image, image_denoised_text, image_denoised_uncond = self.decode_latents(
+                    dec_batch
+                ).chunk(3)
+                image_denoised = image_denoised_text + self.cfg.guidance_scale_img * (
+                    image_denoised_text - image_denoised_uncond
+                )
             elif self.cfg.use_db_img_loss:
                 dec_batch = torch.cat([latents, latents_denoised], dim=0)
                 image, image_denoised = self.decode_latents(dec_batch).chunk(2)
             else:
                 image_denoised = self.decode_latents(latents_denoised)
         # image-space SDS proposed in HiFA: https://hifa-team.github.io/HiFA-site/
-        if self.cfg.use_img_loss or self.cfg.use_db_img_loss or self.cfg.use_tp_img_loss:
+        if (
+            self.cfg.use_img_loss
+            or self.cfg.use_db_img_loss
+            or self.cfg.use_tp_img_loss
+        ):
             grad_img = (image - image_denoised) * alpha / sigma
         else:
             grad_img = None
@@ -403,9 +413,9 @@ class StableDiffusionGuidance(BaseObject):
         camera_distances: Float[Tensor, "B"],
         rgb_as_latents=False,
         guidance_eval=False,
-        noise: Optional[Float[Tensor, "B 4 64 64"]]=None,
-        encode_generator: Optional[torch.Generator]=None,
-        jac_mtx: Optional[Float[Tensor, "B 4 64 64 4 64 64"]]=None,
+        noise: Optional[Float[Tensor, "B 4 64 64"]] = None,
+        encode_generator: Optional[torch.Generator] = None,
+        jac_mtx: Optional[Float[Tensor, "B 4 64 64 4 64 64"]] = None,
         **kwargs,
     ):
         batch_size = rgb.shape[0]
@@ -454,14 +464,16 @@ class StableDiffusionGuidance(BaseObject):
         # clip grad for stable training?
         if self.grad_clip_val is not None:
             grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)
-        
+
         # depress small grad for stable training?
         if self.cfg.median_depress_val is not None:
-            depress_mask = grad.abs()<self.cfg.median_depress_val*grad.abs().median()
-            grad[depress_mask] = grad[depress_mask]*0.
-            
+            depress_mask = (
+                grad.abs() < self.cfg.median_depress_val * grad.abs().median()
+            )
+            grad[depress_mask] = grad[depress_mask] * 0.0
+
         if jac_mtx is not None:
-            grad = (jac_mtx * grad[:,None,None,None,...]).sum((-1,-2,-3))
+            grad = (jac_mtx * grad[:, None, None, None, ...]).sum((-1, -2, -3))
 
         # loss = SpecifyGradient.apply(latents, grad)
         # SpecifyGradient is not straghtforward, use a reparameterization trick instead
@@ -478,22 +490,26 @@ class StableDiffusionGuidance(BaseObject):
             "guidance_scale": self.cfg.guidance_scale,
             "guidance_scale_img": self.cfg.guidance_scale_img,
             "latents": latents,
-            "target_latents": target, 
-            "grad": grad, # for image loss test exp
+            "target_latents": target,
+            "grad": grad,  # for image loss test exp
         }
 
-        if self.cfg.use_img_loss or self.cfg.use_db_img_loss or self.cfg.use_tp_img_loss :
+        if (
+            self.cfg.use_img_loss
+            or self.cfg.use_db_img_loss
+            or self.cfg.use_tp_img_loss
+        ):
             grad_img = torch.nan_to_num(grad_img)
             if self.grad_clip_val is not None:
                 grad_img = grad_img.clamp(-self.grad_clip_val, self.grad_clip_val)
             target_img = (rgb_BCHW_512 - grad_img).detach()
-            loss_sds_img = (
-                0.5 * F.mse_loss(rgb_BCHW_512, target_img, reduction="sum")
+            loss_sds_img = 0.5 * F.mse_loss(rgb_BCHW_512, target_img, reduction="sum")
+            guidance_out.update(
+                {
+                    "loss_sds_img": loss_sds_img,
+                    "target_img": target_img,
+                }
             )
-            guidance_out.update({
-                "loss_sds_img": loss_sds_img,
-                "target_img": target_img,
-            })
 
         if guidance_eval:
             guidance_eval_out = self.guidance_eval(**guidance_eval_utils)

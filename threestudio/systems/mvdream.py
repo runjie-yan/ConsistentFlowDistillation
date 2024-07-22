@@ -6,11 +6,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 import threestudio
+from threestudio.models.geometry.base import BaseImplicitGeometryGenerator
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
-from threestudio.utils.typing import *
-from threestudio.models.geometry.base import BaseImplicitGeometryGenerator
 from threestudio.utils.timer import freq_timer
+from threestudio.utils.typing import *
 
 
 @threestudio.register("mvdream-system")
@@ -31,16 +31,25 @@ class MVDreamSystem(BaseLift3DSystem):
             self.cfg.prompt_processor
         )
         self.prompt_utils = self.prompt_processor()
-        
+
         self.freq_timer = freq_timer()
         if self.cfg.enable_eval_metirc:
             from torchmetrics.multimodal.clip_score import CLIPScore
+
             # to keep on cpu
             self.metrics = {
-                "CLIP_B16": CLIPScore(model_name_or_path="openai/clip-vit-base-patch16"),
-                "CLIP_B32": CLIPScore(model_name_or_path="openai/clip-vit-base-patch32"),
-                "CLIP_L14": CLIPScore(model_name_or_path="openai/clip-vit-large-patch14"),
-                "CLIP_L14_336": CLIPScore(model_name_or_path="openai/clip-vit-large-patch14-336"),
+                "CLIP_B16": CLIPScore(
+                    model_name_or_path="openai/clip-vit-base-patch16"
+                ),
+                "CLIP_B32": CLIPScore(
+                    model_name_or_path="openai/clip-vit-base-patch32"
+                ),
+                "CLIP_L14": CLIPScore(
+                    model_name_or_path="openai/clip-vit-large-patch14"
+                ),
+                "CLIP_L14_336": CLIPScore(
+                    model_name_or_path="openai/clip-vit-large-patch14-336"
+                ),
             }
 
     def on_fit_start(self) -> None:
@@ -54,22 +63,22 @@ class MVDreamSystem(BaseLift3DSystem):
         noise_out = self.noise_generator(out, batch)
         schedule_out = self.t_scheduler(out["comp_rgb"].shape[0])
         guidance_out = self.guidance(
-            out["comp_rgb"], 
-            self.prompt_utils, 
-            **batch, 
-            **schedule_out, 
-            **noise_out, 
-            rgb_as_latents=False, 
+            out["comp_rgb"],
+            self.prompt_utils,
+            **batch,
+            **schedule_out,
+            **noise_out,
+            rgb_as_latents=False,
         )
 
         loss = 0.0
-        
+
         # log and losses
         self.log("training_speed", self.freq_timer.get_freq())
         self.log("train_params/noise_sqrt_beta", self.noise_generator.sqrt_beta)
         for name, value in self.cfg.loss.items():
             self.log(f"train_params/{name}", self.C(value))
-            
+
         for name, value in guidance_out.items():
             if not (type(value) is torch.Tensor and value.numel() > 1):
                 self.log(f"train/{name}", value)
@@ -120,7 +129,7 @@ class MVDreamSystem(BaseLift3DSystem):
             self.log(f"train_params/{name}", self.C(value))
 
         return {"loss": loss}
-    
+
     def on_validation_epoch_start(self) -> None:
         if self.cfg.enable_eval_metirc:
             for mtc_name, metirc in self.metrics.items():
@@ -130,26 +139,32 @@ class MVDreamSystem(BaseLift3DSystem):
         out = self(batch)
         noise_out = self.noise_generator(out, batch)
         noise_vis = F.interpolate(
-            noise_out['noise'][:, :3],
-            (512,512),
+            noise_out["noise"][:, :3],
+            (512, 512),
             mode="nearest",
         )
         # metric evaluation
         if self.cfg.enable_eval_metirc:
             with torch.no_grad():
                 prompt = self.prompt_utils.prompt
-                clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                 for mtc_name, metirc in self.metrics.items():
-                    self.log(f"metric/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-        
+                    self.log(
+                        f"metric/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max"
+                    )
+
         if not self.cfg.rgb_as_latents:
             with torch.no_grad():
-                latents = self.guidance.encode_images(out["comp_rgb"].permute(0,3,1,2))
-                img_enc_dec = self.guidance.decode_latents(latents).permute(0,2,3,1)
+                latents = self.guidance.encode_images(
+                    out["comp_rgb"].permute(0, 3, 1, 2)
+                )
+                img_enc_dec = self.guidance.decode_latents(latents).permute(0, 2, 3, 1)
         self.save_image_grid(
-            f"train/it{self.true_global_step}-{batch['index'][0]}.png" 
-            if not batch['index'][0]==0 else 
-            f"train-video/{self.true_global_step}.png",
+            (
+                f"train/it{self.true_global_step}-{batch['index'][0]}.png"
+                if not batch["index"][0] == 0
+                else f"train-video/{self.true_global_step}.png"
+            ),
             (
                 [
                     {
@@ -175,7 +190,7 @@ class MVDreamSystem(BaseLift3DSystem):
             + [
                 {
                     "type": "rgb",
-                    "img": noise_vis[0].permute(1,2,0),
+                    "img": noise_vis[0].permute(1, 2, 0),
                     "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                 }
             ]
@@ -214,28 +229,32 @@ class MVDreamSystem(BaseLift3DSystem):
         if self.cfg.enable_eval_metirc:
             for mtc_name, metirc in self.metrics.items():
                 self.metrics[mtc_name] = metirc.to(self.device)
-            
+
     def test_step(self, batch, batch_idx):
         out = self(batch)
         noise_out = self.noise_generator(out, batch)
         noise_vis = F.interpolate(
-            noise_out['noise'][:, :3],
-            (512,512),
+            noise_out["noise"][:, :3],
+            (512, 512),
             mode="nearest",
         )
         # metric evaluation
         if self.cfg.enable_eval_metirc:
             with torch.no_grad():
                 prompt = self.prompt_utils.prompt
-                clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                 for mtc_name, metirc in self.metrics.items():
-                    self.log(f"metric-test/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-                    
+                    self.log(
+                        f"metric-test/{mtc_name}",
+                        metirc(clip_img, prompt),
+                        reduce_fx="max",
+                    )
+
         if not self.cfg.rgb_as_latents:
             with torch.no_grad():
                 img_enc_dec = self.guidance.decode_latents(
-                    self.guidance.encode_images(out["comp_rgb"].permute(0,3,1,2))
-                ).permute(0,2,3,1)
+                    self.guidance.encode_images(out["comp_rgb"].permute(0, 3, 1, 2))
+                ).permute(0, 2, 3, 1)
         self.save_image_grid(
             f"it{self.true_global_step}-test/{batch['index'][0]}.png",
             (
@@ -264,7 +283,7 @@ class MVDreamSystem(BaseLift3DSystem):
             + [
                 {
                     "type": "rgb",
-                    "img": noise_vis[0].permute(1,2,0),
+                    "img": noise_vis[0].permute(1, 2, 0),
                     "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                 }
             ]

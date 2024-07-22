@@ -87,17 +87,19 @@ class SaverMixin:
         nc = 4 if rgba else 3
         imgs = [img[..., start : start + nc] for start in range(0, img.shape[-1], nc)]
         imgs = [
-            img_
-            if img_.shape[-1] == nc
-            else np.concatenate(
-                [
-                    img_,
-                    np.zeros(
-                        (img_.shape[0], img_.shape[1], nc - img_.shape[2]),
-                        dtype=img_.dtype,
-                    ),
-                ],
-                axis=-1,
+            (
+                img_
+                if img_.shape[-1] == nc
+                else np.concatenate(
+                    [
+                        img_,
+                        np.zeros(
+                            (img_.shape[0], img_.shape[1], nc - img_.shape[2]),
+                            dtype=img_.dtype,
+                        ),
+                    ],
+                    axis=-1,
+                )
             )
             for img_ in imgs
         ]
@@ -315,10 +317,10 @@ class SaverMixin:
             draw = ImageDraw.Draw(img)
             black, white = (0, 0, 0), (255, 255, 255)
             for i, text in enumerate(texts):
-                draw.text(((img.size[0] // len(texts)) * i + 1 , 2), f"{text}", white)
-                draw.text(((img.size[0] // len(texts)) * i + 1 , 0), f"{text}", white)
-                draw.text(((img.size[0] // len(texts)) * i - 1 , 2), f"{text}", white)
-                draw.text(((img.size[0] // len(texts)) * i - 1 , 0), f"{text}", white)
+                draw.text(((img.size[0] // len(texts)) * i + 1, 2), f"{text}", white)
+                draw.text(((img.size[0] // len(texts)) * i + 1, 0), f"{text}", white)
+                draw.text(((img.size[0] // len(texts)) * i - 1, 2), f"{text}", white)
+                draw.text(((img.size[0] // len(texts)) * i - 1, 0), f"{text}", white)
                 draw.text(((img.size[0] // len(texts)) * i + 0, 1), f"{text}", black)
                 # draw.text((2, (img.size[1] // len(texts)) * i + 1), f"{text}", white)
                 # draw.text((0, (img.size[1] // len(texts)) * i + 1), f"{text}", white)

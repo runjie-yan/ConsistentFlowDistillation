@@ -37,7 +37,9 @@ class NeuralRadianceMaterial(BaseMaterial):
     def configure(self) -> None:
         self.encoding = get_encoding(3, self.cfg.dir_encoding_config)
         self.n_input_dims = self.cfg.n_feature_dims + self.encoding.n_output_dims  # type: ignore
-        self.network = get_mlp(self.n_input_dims, self.cfg.n_output_dims, self.cfg.mlp_network_config)
+        self.network = get_mlp(
+            self.n_input_dims, self.cfg.n_output_dims, self.cfg.mlp_network_config
+        )
 
     def forward(
         self,
@@ -51,6 +53,8 @@ class NeuralRadianceMaterial(BaseMaterial):
         network_inp = torch.cat(
             [features.view(-1, features.shape[-1]), viewdirs_embd], dim=-1
         )
-        color = self.network(network_inp).view(*features.shape[:-1], self.cfg.n_output_dims)
+        color = self.network(network_inp).view(
+            *features.shape[:-1], self.cfg.n_output_dims
+        )
         color = get_activation(self.cfg.color_activation)(color)
         return color

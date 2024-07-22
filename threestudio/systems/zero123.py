@@ -138,7 +138,7 @@ class Zero123(BaseLift3DSystem):
             guidance_out = self.guidance(
                 out["comp_rgb"],
                 **batch,
-                **noise_out, 
+                **noise_out,
                 rgb_as_latents=False,
                 guidance_eval=guidance_eval,
             )
@@ -301,9 +301,11 @@ class Zero123(BaseLift3DSystem):
                 },
             ],
             # claforte: TODO: don't hardcode the frame numbers to record... read them from cfg instead.
-            name=f"validation_step_batchidx_{batch_idx}"
-            if batch_idx in [0, 7, 15, 23, 29]
-            else None,
+            name=(
+                f"validation_step_batchidx_{batch_idx}"
+                if batch_idx in [0, 7, 15, 23, 29]
+                else None
+            ),
             step=self.true_global_step,
         )
 

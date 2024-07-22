@@ -10,6 +10,7 @@ from threestudio.models.mesh import Mesh
 from threestudio.utils.base import BaseModule
 from threestudio.utils.typing import *
 
+
 class BaseImgenerator(BaseModule):
     @dataclass
     class Config(BaseModule.Config):
@@ -23,7 +24,5 @@ class BaseImgenerator(BaseModule):
     def regenerate(self, gen_id=None) -> None:
         raise NotImplementedError
 
-    def forward(
-        self, **batch
-    ) -> Dict[str, Float[Tensor, "..."]]:
+    def forward(self, **batch) -> Dict[str, Float[Tensor, "..."]]:
         raise NotImplementedError

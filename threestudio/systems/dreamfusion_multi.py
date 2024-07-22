@@ -19,10 +19,9 @@ class DreamFusionMulti(DreamFusion):
         pass
 
     cfg: Config
-    
+
     def configure(self):
         return super().configure()
-
 
     def validation_step(self, batch, batch_idx):
         for ptc_id in range(self.geometry.cfg.particle_num):
@@ -31,36 +30,42 @@ class DreamFusionMulti(DreamFusion):
             noise_out = self.noise_generator(out, batch)
             schedule_out = self.t_scheduler(out["comp_rgb"].shape[0])
             guidance_out = self.guidance(
-                out["comp_rgb"], 
-                self.prompt_utils, 
-                **batch, 
+                out["comp_rgb"],
+                self.prompt_utils,
+                **batch,
                 **schedule_out,
                 **noise_out,
-                rgb_as_latents=False, 
+                rgb_as_latents=False,
                 return_rgb_1step_orig=True,
             )
             # metric evaluation
             if self.cfg.enable_eval_metirc:
                 with torch.no_grad():
                     prompt = self.prompt_utils.prompt
-                    clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                    clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                     for mtc_name, metirc in self.metrics.items():
-                        self.log(f"metric/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-            
+                        self.log(
+                            f"metric/{mtc_name}",
+                            metirc(clip_img, prompt),
+                            reduce_fx="max",
+                        )
+
             if not self.cfg.rgb_as_latents:
                 enc_dec_ret = False
                 try:
                     with torch.no_grad():
                         img_enc_dec = self.guidance.vae_decode(
-                            self.guidance.pipe.vae, guidance_out['latents']
-                        ).permute(0,2,3,1)
+                            self.guidance.pipe.vae, guidance_out["latents"]
+                        ).permute(0, 2, 3, 1)
                         enc_dec_ret = True
                 except:
                     pass
             self.save_image_grid(
-                f"train-{ptc_id}/it{self.true_global_step}-{batch['index'][0]}.png" 
-                if not batch['index'][0]==0 else 
-                f"train-{ptc_id}-video/{self.true_global_step}.png",
+                (
+                    f"train-{ptc_id}/it{self.true_global_step}-{batch['index'][0]}.png"
+                    if not batch["index"][0] == 0
+                    else f"train-{ptc_id}-video/{self.true_global_step}.png"
+                ),
                 (
                     [
                         {
@@ -98,10 +103,10 @@ class DreamFusionMulti(DreamFusion):
                     {
                         "type": "rgb",
                         "img": F.interpolate(
-                            noise_out['noise'][:, :3],
-                            (512,512),
+                            noise_out["noise"][:, :3],
+                            (512, 512),
                             mode="nearest",
-                        ).permute(0,2,3,1)[0],
+                        ).permute(0, 2, 3, 1)[0],
                         "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                     }
                 ]
@@ -109,11 +114,11 @@ class DreamFusionMulti(DreamFusion):
                     {
                         "type": "grayscale",
                         "img": F.interpolate(
-                            noise_out['det_mask'].float(),
-                            (512,512),
+                            noise_out["det_mask"].float(),
+                            (512, 512),
                             mode="nearest",
-                        ).permute(0,2,3,1)[0,:,:,0],
-                        "kwargs": {"cmap": None, "data_range": (0., 1.)},
+                        ).permute(0, 2, 3, 1)[0, :, :, 0],
+                        "kwargs": {"cmap": None, "data_range": (0.0, 1.0)},
                     },
                 ]
                 + (
@@ -121,14 +126,14 @@ class DreamFusionMulti(DreamFusion):
                         {
                             "type": "grayscale",
                             "img": F.interpolate(
-                                noise_out['area_count'].float(),
-                                (512,512),
+                                noise_out["area_count"].float(),
+                                (512, 512),
                                 mode="nearest",
-                            ).permute(0,2,3,1)[0,:,:,0],
+                            ).permute(0, 2, 3, 1)[0, :, :, 0],
                             "kwargs": {"cmap": None, "data_range": (0, 16)},
                         },
                     ]
-                    if 'area_count' in noise_out
+                    if "area_count" in noise_out
                     else []
                 )
                 + (
@@ -136,14 +141,14 @@ class DreamFusionMulti(DreamFusion):
                         {
                             "type": "grayscale",
                             "img": F.interpolate(
-                                noise_out['z_mean_BCHW'].float(),
-                                (512,512),
+                                noise_out["z_mean_BCHW"].float(),
+                                (512, 512),
                                 mode="nearest",
-                            ).permute(0,2,3,1)[0,:,:,0],
+                            ).permute(0, 2, 3, 1)[0, :, :, 0],
                             "kwargs": {"data_range": (0.5, 1.5)},
                         },
                     ]
-                    if 'z_mean_BCHW' in noise_out
+                    if "z_mean_BCHW" in noise_out
                     else []
                 )
                 + (
@@ -188,12 +193,12 @@ class DreamFusionMulti(DreamFusion):
             schedule_out = self.t_scheduler(out["comp_rgb"].shape[0])
             try:
                 guidance_out = self.guidance(
-                    out["comp_rgb"], 
-                    self.prompt_utils, 
-                    **batch, 
+                    out["comp_rgb"],
+                    self.prompt_utils,
+                    **batch,
                     **schedule_out,
                     **noise_out,
-                    rgb_as_latents=False, 
+                    rgb_as_latents=False,
                     return_rgb_1step_orig=True,
                 )
             except AttributeError:
@@ -202,17 +207,21 @@ class DreamFusionMulti(DreamFusion):
             if self.cfg.enable_eval_metirc:
                 with torch.no_grad():
                     prompt = self.prompt_utils.prompt
-                    clip_img = (out["comp_rgb"].permute(0,3,1,2)[0]*255).int()
+                    clip_img = (out["comp_rgb"].permute(0, 3, 1, 2)[0] * 255).int()
                     for mtc_name, metirc in self.metrics.items():
-                        self.log(f"metric-test/{mtc_name}", metirc(clip_img, prompt), reduce_fx="max")
-                               
+                        self.log(
+                            f"metric-test/{mtc_name}",
+                            metirc(clip_img, prompt),
+                            reduce_fx="max",
+                        )
+
             if not self.cfg.rgb_as_latents:
                 enc_dec_ret = False
                 try:
                     with torch.no_grad():
                         img_enc_dec = self.guidance.vae_decode(
-                            self.guidance.pipe.vae, guidance_out['latents']
-                        ).permute(0,2,3,1)
+                            self.guidance.pipe.vae, guidance_out["latents"]
+                        ).permute(0, 2, 3, 1)
                         enc_dec_ret = True
                 except:
                     pass
@@ -255,10 +264,10 @@ class DreamFusionMulti(DreamFusion):
                     {
                         "type": "rgb",
                         "img": F.interpolate(
-                            noise_out['noise'][:, :3],
-                            (512,512),
+                            noise_out["noise"][:, :3],
+                            (512, 512),
                             mode="nearest",
-                        ).permute(0,2,3,1)[0],
+                        ).permute(0, 2, 3, 1)[0],
                         "kwargs": {"data_format": "HWC", "data_range": (-1, 1)},
                     }
                 ]
@@ -266,11 +275,11 @@ class DreamFusionMulti(DreamFusion):
                     {
                         "type": "grayscale",
                         "img": F.interpolate(
-                            noise_out['det_mask'].float(),
-                            (512,512),
+                            noise_out["det_mask"].float(),
+                            (512, 512),
                             mode="nearest",
-                        ).permute(0,2,3,1)[0,:,:,0],
-                        "kwargs": {"cmap": None, "data_range": (0., 1.)},
+                        ).permute(0, 2, 3, 1)[0, :, :, 0],
+                        "kwargs": {"cmap": None, "data_range": (0.0, 1.0)},
                     },
                 ]
                 + (
@@ -278,14 +287,14 @@ class DreamFusionMulti(DreamFusion):
                         {
                             "type": "grayscale",
                             "img": F.interpolate(
-                                noise_out['area_count'].float(),
-                                (512,512),
+                                noise_out["area_count"].float(),
+                                (512, 512),
                                 mode="nearest",
-                            ).permute(0,2,3,1)[0,:,:,0],
+                            ).permute(0, 2, 3, 1)[0, :, :, 0],
                             "kwargs": {"cmap": None, "data_range": (0, 16)},
                         },
                     ]
-                    if 'area_count' in noise_out
+                    if "area_count" in noise_out
                     else []
                 )
                 + (
@@ -293,14 +302,14 @@ class DreamFusionMulti(DreamFusion):
                         {
                             "type": "grayscale",
                             "img": F.interpolate(
-                                noise_out['z_mean_BCHW'].float(),
-                                (512,512),
+                                noise_out["z_mean_BCHW"].float(),
+                                (512, 512),
                                 mode="nearest",
-                            ).permute(0,2,3,1)[0,:,:,0],
+                            ).permute(0, 2, 3, 1)[0, :, :, 0],
                             "kwargs": {"data_range": (0.5, 1.5)},
                         },
                     ]
-                    if 'z_mean_BCHW' in noise_out
+                    if "z_mean_BCHW" in noise_out
                     else []
                 )
                 + (

@@ -13,7 +13,11 @@ from threestudio.models.materials.base import BaseMaterial
 from threestudio.models.networks import create_network_with_input_encoding
 from threestudio.models.renderers.base import VolumeRenderer
 from threestudio.systems.utils import parse_optimizer, parse_scheduler_to_instance
-from threestudio.utils.ops import chunk_batch_with_budget, get_activation, validate_empty_rays
+from threestudio.utils.ops import (
+    chunk_batch_with_budget,
+    get_activation,
+    validate_empty_rays,
+)
 from threestudio.utils.typing import *
 
 
@@ -28,7 +32,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
         train_chunk_size: int = 10_000
         # for memory
         return_intermediate: bool = False
-        
+
         randomized: bool = True
 
         near_plane: float = 0.0
@@ -120,18 +124,18 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
 
         # for proposal
         self.vars_in_forward = {}
-        
+
     def flatten_forward(
         self,
         rays_o_flatten: Float[Tensor, "Nr 3"],
         rays_d_flatten: Float[Tensor, "Nr 3"],
         light_positions_flatten: Float[Tensor, "Nr 3"],
         chunk_budget: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Float[Tensor, "..."]]:
         n_rays = rays_o_flatten.shape[0]
         chunk_budget_remain = None
-        
+
         if self.cfg.estimator == "occgrid":
             if not self.cfg.grid_prune:
                 with torch.no_grad():
@@ -273,8 +277,8 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
             query_pos_num = positions.shape[0]
             mask_positions = torch.randperm(query_pos_num, device=positions.device)
             mask_positions = mask_positions < chunk_budget
-            chunk_budget_remain = max(0, chunk_budget-query_pos_num)
-            
+            chunk_budget_remain = max(0, chunk_budget - query_pos_num)
+
             with torch.no_grad():
                 geo_out_mask = self.geometry(
                     positions[~mask_positions],
@@ -284,9 +288,9 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                     viewdirs=t_dirs[~mask_positions],
                     positions=positions[~mask_positions],
                     light_positions=t_light_positions[~mask_positions],
-                    **geo_out_mask
+                    **geo_out_mask,
                 )
-                
+
             geo_out = self.geometry(
                 positions[mask_positions],
                 output_normal=self.material.requires_normal,
@@ -296,7 +300,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                 positions=positions[mask_positions],
                 light_positions=t_light_positions[mask_positions],
                 **geo_out,
-                **kwargs
+                **kwargs,
             )
 
             for key in geo_out:
@@ -305,7 +309,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                         new_out = torch.zeros(
                             query_pos_num,
                             *geo_out[key].shape[1:],
-                            device=geo_out[key].device
+                            device=geo_out[key].device,
                         )
                         new_out[mask_positions] = geo_out[key]
                         new_out[~mask_positions] = geo_out_mask[key]
@@ -326,7 +330,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                 positions=positions,
                 light_positions=t_light_positions,
                 **geo_out,
-                **kwargs
+                **kwargs,
             )
 
         weights: Float[Tensor, "Nr 1"]
@@ -367,7 +371,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
             n_rays=n_rays,
         )
         z_variance = z_variance_unmasked * (opacity > 0.5).float()
-        
+
         out = {
             "comp_rgb_fg": comp_rgb_fg,
             "opacity": opacity,
@@ -411,10 +415,12 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                         positions + torch.randn_like(positions) * 1e-2,
                         output_normal=self.material.requires_normal,
                     )["normal"]
-                    out.update({
-                        "normal_perturb": normal_perturb,
-                        "normal": geo_out["normal"],
-                    })
+                    out.update(
+                        {
+                            "normal_perturb": normal_perturb,
+                            "normal": geo_out["normal"],
+                        }
+                    )
         else:
             if "normal" in geo_out:
                 comp_normal = nerfacc.accumulate_along_rays(
@@ -430,7 +436,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                         "comp_normal": comp_normal,
                     }
                 )
-                
+
         return chunk_budget_remain, out
 
     def forward(
@@ -439,7 +445,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
         rays_d: Float[Tensor, "B H W 3"],
         light_positions: Float[Tensor, "B 3"],
         bg_color: Optional[Tensor] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Float[Tensor, "..."]]:
         batch_size, height, width = rays_o.shape[:3]
         rays_o_flatten: Float[Tensor, "Nr 3"] = rays_o.reshape(-1, 3)
@@ -449,8 +455,10 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
             .expand(-1, height, width, -1)
             .reshape(-1, 3)
         )
-        
-        chunk_size = self.cfg.train_chunk_size if self.training else self.cfg.eval_chunk_size
+
+        chunk_size = (
+            self.cfg.train_chunk_size if self.training else self.cfg.eval_chunk_size
+        )
         out = chunk_batch_with_budget(
             self.flatten_forward,
             chunk_size,
@@ -458,10 +466,10 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
             rays_d_flatten,
             light_positions_flatten,
             chunk_budget=self.cfg.train_gradient_budget,
-            **kwargs
+            **kwargs,
         )
 
-        comp_rgb_bg = self.background(dirs=rays_d) # no need to chunk batch
+        comp_rgb_bg = self.background(dirs=rays_d)  # no need to chunk batch
         if bg_color is None:
             bg_color = comp_rgb_bg
         else:
@@ -475,20 +483,22 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
         if bg_color.shape[:-1] == (batch_size, height, width):
             bg_color = bg_color.reshape(batch_size * height * width, -1)
 
-        comp_rgb = out['comp_rgb_fg'] + bg_color * (1.0 - out['opacity'])
+        comp_rgb = out["comp_rgb_fg"] + bg_color * (1.0 - out["opacity"])
 
-        out.update({
-            "comp_rgb": comp_rgb.view(batch_size, height, width, -1),
-            "comp_rgb_bg": comp_rgb_bg.view(batch_size, height, width, -1),
-        })
-        out["comp_rgb_fg"] = out['comp_rgb_fg'].view(batch_size, height, width, -1)
-        out["opacity"] = out['opacity'].view(batch_size, height, width, 1)
-        out["depth"] = out['depth'].view(batch_size, height, width, 1)
-        out["z_mean"] = out['z_mean'].view(batch_size, height, width, 1)
-        out["z_variance"] = out['z_variance'].view(batch_size, height, width, 1)
-        if 'comp_normal' in out:
-            out["comp_normal"] = out['comp_normal'].view(batch_size, height, width, 3)
-        
+        out.update(
+            {
+                "comp_rgb": comp_rgb.view(batch_size, height, width, -1),
+                "comp_rgb_bg": comp_rgb_bg.view(batch_size, height, width, -1),
+            }
+        )
+        out["comp_rgb_fg"] = out["comp_rgb_fg"].view(batch_size, height, width, -1)
+        out["opacity"] = out["opacity"].view(batch_size, height, width, 1)
+        out["depth"] = out["depth"].view(batch_size, height, width, 1)
+        out["z_mean"] = out["z_mean"].view(batch_size, height, width, 1)
+        out["z_variance"] = out["z_variance"].view(batch_size, height, width, 1)
+        if "comp_normal" in out:
+            out["comp_normal"] = out["comp_normal"].view(batch_size, height, width, 3)
+
         return out
 
     def update_step(

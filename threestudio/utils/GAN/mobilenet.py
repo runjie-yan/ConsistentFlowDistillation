@@ -56,7 +56,7 @@ class SEModule(nn.Module):
             nn.Linear(channel, channel // reduction, bias=False),
             nn.ReLU(inplace=True),
             nn.Linear(channel // reduction, channel, bias=False),
-            Hsigmoid()
+            Hsigmoid(),
             # nn.Sigmoid()
         )
 

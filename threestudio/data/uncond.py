@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 import threestudio
 from threestudio import register
-from threestudio.utils.base import Updateable
+from threestudio.utils.base import BaseObject, Updateable
 from threestudio.utils.config import parse_structured
 from threestudio.utils.misc import get_device
 from threestudio.utils.ops import (
@@ -22,7 +22,7 @@ from threestudio.utils.ops import (
     get_rays,
 )
 from threestudio.utils.typing import *
-from threestudio.utils.base import BaseObject
+
 
 @dataclass
 class RandomCameraDataModuleConfig:
@@ -57,16 +57,17 @@ class RandomCameraDataModuleConfig:
     progressive_until: int = 0  # progressive ranges for elevation, azimuth, r, fovy
 
     rays_d_normalize: bool = True
-    
+
     quantize: int = 0
+
 
 class RandomCameraIterableDataset(BaseObject, IterableDataset):
     @dataclass
     class Config(RandomCameraDataModuleConfig):
         pass
-    
+
     cfg: Config
-    
+
     def configure(self) -> None:
         self.heights: List[int] = (
             [self.cfg.height] if isinstance(self.cfg.height, int) else self.cfg.height
@@ -182,10 +183,13 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
             # ensures sampled azimuth angles in a batch cover the whole range
             if self.cfg.quantize > 0:
                 azimuth_deg = (
-                        (
-                            torch.randint(0, self.cfg.quantize, (1,), device=self.device) / self.cfg.quantize
-                        ) + (
-                        torch.arange(self.batch_size, device=self.device) / self.batch_size
+                    (
+                        torch.randint(0, self.cfg.quantize, (1,), device=self.device)
+                        / self.cfg.quantize
+                    )
+                    + (
+                        torch.arange(self.batch_size, device=self.device)
+                        / self.batch_size
                     )
                 ) * (
                     self.azimuth_range[1] - self.azimuth_range[0]
@@ -194,7 +198,8 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
                 ]
             else:
                 azimuth_deg = (
-                    torch.rand(self.batch_size, device=self.device) + torch.arange(self.batch_size, device=self.device)
+                    torch.rand(self.batch_size, device=self.device)
+                    + torch.arange(self.batch_size, device=self.device)
                 ) / self.batch_size * (
                     self.azimuth_range[1] - self.azimuth_range[0]
                 ) + self.azimuth_range[
@@ -204,11 +209,15 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
             # simple random sampling
             if self.cfg.quantize > 0:
                 azimuth_deg = (
-                    (
-                        torch.randint(0, self.cfg.quantize, (self.batch_size,), device=self.device) / self.cfg.quantize
-                    ) * (self.azimuth_range[1] - self.azimuth_range[0])
-                    + self.azimuth_range[0]
-                )
+                    torch.randint(
+                        0, self.cfg.quantize, (self.batch_size,), device=self.device
+                    )
+                    / self.cfg.quantize
+                ) * (
+                    self.azimuth_range[1] - self.azimuth_range[0]
+                ) + self.azimuth_range[
+                    0
+                ]
             else:
                 azimuth_deg = (
                     torch.rand(self.batch_size, device=self.device)
@@ -239,19 +248,22 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
         # default scene center at origin
         center: Float[Tensor, "B 3"] = torch.zeros_like(camera_positions)
         # default camera up direction as +z
-        up: Float[Tensor, "B 3"] = torch.as_tensor([0, 0, 1], dtype=torch.float32, device=self.device)[
-            None, :
-        ].repeat(self.batch_size, 1)
+        up: Float[Tensor, "B 3"] = torch.as_tensor(
+            [0, 0, 1], dtype=torch.float32, device=self.device
+        )[None, :].repeat(self.batch_size, 1)
 
         # sample camera perturbations from a uniform distribution [-camera_perturb, camera_perturb]
         camera_perturb: Float[Tensor, "B 3"] = (
-            torch.rand(self.batch_size, 3, device=self.device) * 2 * self.cfg.camera_perturb
+            torch.rand(self.batch_size, 3, device=self.device)
+            * 2
+            * self.cfg.camera_perturb
             - self.cfg.camera_perturb
         )
         camera_positions = camera_positions + camera_perturb
         # sample center perturbations from a normal distribution with mean 0 and std center_perturb
         center_perturb: Float[Tensor, "B 3"] = (
-            torch.randn(self.batch_size, 3, device=self.device) * self.cfg.center_perturb
+            torch.randn(self.batch_size, 3, device=self.device)
+            * self.cfg.center_perturb
         )
         center = center + center_perturb
         # sample up perturbations from a normal distribution with mean 0 and std up_perturb
@@ -262,7 +274,8 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
 
         # sample fovs from a uniform distribution bounded by fov_range
         fovy_deg: Float[Tensor, "B"] = (
-            torch.rand(self.batch_size, device=self.device) * (self.fovy_range[1] - self.fovy_range[0])
+            torch.rand(self.batch_size, device=self.device)
+            * (self.fovy_range[1] - self.fovy_range[0])
             + self.fovy_range[0]
         )
         fovy = fovy_deg * math.pi / 180
@@ -277,7 +290,8 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
             # sample light direction from a normal distribution with mean camera_position and std light_position_perturb
             light_direction: Float[Tensor, "B 3"] = F.normalize(
                 camera_positions
-                + torch.randn(self.batch_size, 3, device=self.device) * self.cfg.light_position_perturb,
+                + torch.randn(self.batch_size, 3, device=self.device)
+                * self.cfg.light_position_perturb,
                 dim=-1,
             )
             # get light position by scaling light direction by light distance
@@ -300,7 +314,8 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
                 torch.rand(self.batch_size, device=self.device) * math.pi * 2 - math.pi
             )  # [-pi, pi]
             light_elevation = (
-                torch.rand(self.batch_size, device=self.device) * math.pi / 3 + math.pi / 6
+                torch.rand(self.batch_size, device=self.device) * math.pi / 3
+                + math.pi / 6
             )  # [pi/6, pi/2]
             light_positions_local = torch.stack(
                 [
@@ -348,7 +363,9 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
 
         self.proj_mtx: Float[Tensor, "B 4 4"] = get_projection_matrix(
             fovy, self.width / self.height, 0.01, 100.0
-        ).to(self.device)  # FIXME: hard-coded near and far
+        ).to(
+            self.device
+        )  # FIXME: hard-coded near and far
         mvp_mtx: Float[Tensor, "B 4 4"] = get_mvp_matrix(c2w, self.proj_mtx)
         self.fovy = fovy
 
@@ -373,9 +390,9 @@ class RandomCameraDataset(BaseObject, Dataset):
     @dataclass
     class Config(RandomCameraDataModuleConfig):
         pass
-    
+
     cfg: Config
-    
+
     def configure(self, split: str) -> None:
         self.split = split
 
@@ -387,7 +404,9 @@ class RandomCameraDataset(BaseObject, Dataset):
         azimuth_deg: Float[Tensor, "B"]
         if self.split == "val":
             # make sure the first and last view are not the same
-            azimuth_deg = torch.linspace(0, 360.0, self.n_views + 1, device=self.device)[: self.n_views]
+            azimuth_deg = torch.linspace(
+                0, 360.0, self.n_views + 1, device=self.device
+            )[: self.n_views]
         else:
             azimuth_deg = torch.linspace(0, 360.0, self.n_views, device=self.device)
         elevation_deg: Float[Tensor, "B"] = torch.full(
@@ -415,9 +434,9 @@ class RandomCameraDataset(BaseObject, Dataset):
         # default scene center at origin
         center: Float[Tensor, "B 3"] = torch.zeros_like(camera_positions)
         # default camera up direction as +z
-        up: Float[Tensor, "B 3"] = torch.as_tensor([0, 0, 1], dtype=torch.float32, device=self.device)[
-            None, :
-        ].repeat(self.cfg.eval_batch_size, 1)
+        up: Float[Tensor, "B 3"] = torch.as_tensor(
+            [0, 0, 1], dtype=torch.float32, device=self.device
+        )[None, :].repeat(self.cfg.eval_batch_size, 1)
 
         fovy_deg: Float[Tensor, "B"] = torch.full_like(
             elevation_deg, self.cfg.eval_fovy_deg
@@ -456,7 +475,9 @@ class RandomCameraDataset(BaseObject, Dataset):
         )
         self.proj_mtx: Float[Tensor, "B 4 4"] = get_projection_matrix(
             fovy, self.cfg.eval_width / self.cfg.eval_height, 0.01, 100.0
-        ).to(self.device)  # FIXME: hard-coded near and far
+        ).to(
+            self.device
+        )  # FIXME: hard-coded near and far
         mvp_mtx: Float[Tensor, "B 4 4"] = get_mvp_matrix(c2w, self.proj_mtx)
 
         self.rays_o, self.rays_d = rays_o, rays_d

@@ -1,7 +1,6 @@
+import threestudio
 from time import time
 from threestudio.utils.typing import *
-import threestudio
-
 class context_timer:
     def __init__(self, tag):
         self.tag = tag

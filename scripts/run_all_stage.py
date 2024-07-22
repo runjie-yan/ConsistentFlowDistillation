@@ -47,8 +47,9 @@ if __name__ == "__main__":
 
     # stage 1
     cmd = f'python launch.py --train --gpu {gpu} --config configs/cfd/{stage1_cfg}.yaml name={dir_stage1} tag="{tag}" system.prompt_processor.prompt="{prompt}" seed={seed}'
-    print()
-    print(cmd)
+    print("="*len(cmd))
+    print("\033[34m"+cmd+"\033[0m")
+    print("="*len(cmd))
     ret = os.system(cmd)
     if ret != 0:
         raise RuntimeError
@@ -60,8 +61,9 @@ if __name__ == "__main__":
             "outputs", dir_stage1, folder_fn, "ckpts", "last.ckpt"
         )
         cmd = f'python launch.py --train --gpu {gpu} --config configs/cfd/sd-mesh-geometry-stage2.yaml name={dir_mesh_stage2} tag="{tag}" system.geometry_convert_from="{geometry_convert_from}" system.prompt_processor.prompt="{prompt}" seed={seed}'
-        print()
-        print(cmd)
+        print("="*len(cmd))
+        print("\033[34m"+cmd+"\033[0m")
+        print("="*len(cmd))
         ret = os.system(cmd)
         if ret != 0:
             raise RuntimeError
@@ -74,8 +76,9 @@ if __name__ == "__main__":
             "outputs", dir_mesh_stage2, folder_fn, "ckpts", "last.ckpt"
         )
         cmd = f'python launch.py --train --gpu {gpu} --config configs/cfd/sd-mesh-texture-stage3.yaml name={dir_mesh_stage3} tag="{tag}" system.geometry_convert_from="{geometry_convert_from}" system.prompt_processor.prompt="{prompt}" seed={seed}'
-        print()
-        print(cmd)
+        print("="*len(cmd))
+        print("\033[34m"+cmd+"\033[0m")
+        print("="*len(cmd))
         ret = os.system(cmd)
         if ret != 0:
             raise RuntimeError
@@ -86,8 +89,9 @@ if __name__ == "__main__":
             "outputs", dir_stage1, folder_fn, "ckpts", "last.ckpt"
         )
         cmd = f'python launch.py --train --gpu {gpu} --config configs/cfd/sd-nerf-stage2.yaml name={dir_nerf_stage2} tag="{tag}" system.geometry_convert_from="{geometry_convert_from}" system.prompt_processor.prompt="{prompt}" seed={seed}'
-        print()
-        print(cmd)
+        print("="*len(cmd))
+        print("\033[34m"+cmd+"\033[0m")
+        print("="*len(cmd))
         ret = os.system(cmd)
         if ret != 0:
             raise RuntimeError

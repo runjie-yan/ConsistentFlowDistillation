@@ -1,5 +1,6 @@
 lightning==2.0.0
 omegaconf==2.3.0
+gpustat
 jaxtyping
 typeguard
 git+https://github.com/KAIR-BAIR/nerfacc.git@v0.5.2
@@ -39,3 +40,6 @@ git+https://github.com/openai/CLIP.git
 
 #controlnet
 controlnet_aux
+
+# MVDream
+git+https://github.com/bytedance/MVDream

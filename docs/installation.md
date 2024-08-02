@@ -17,6 +17,10 @@ Install [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive).
   - `sudo apt-key del 7fa2af80`
   - Run [command for CUDA 11.8 WSL-Ubuntu](https://developer.nvidia.com/cuda-11-8-0-download-archive?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_local)
 
+Or try install CUDA 12.1 via conda:
+```bash
+conda install nvidia/label/cuda-12.1.0::cuda-toolkit -y
+```
 ## Git Clone
 
 ```bash

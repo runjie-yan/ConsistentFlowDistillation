@@ -1,7 +1,7 @@
 # Consistent Flow Distillation
 Official Implementation for Consistent Flow Distillation for Text-to-3D Generation
 
-[project page](https://runjie-yan.github.io/consistentflowdistillation/) | paper
+[project page](https://runjie-yan.github.io/cfd/) | paper
 
 <div style="display: flex; justify-content: space-between;">
   <img src="./load/cfd_teaser/ship.png" alt="ship" width="30%">
@@ -12,7 +12,7 @@ Official Implementation for Consistent Flow Distillation for Text-to-3D Generati
 The code is built upon [threestudio](https://github.com/threestudio-project/threestudio)
 
 ## Installation
-- (Optional, Recommended) Create a virtual environment:
+- Create a virtual environment:
 ```sh
 conda create -n cfd python=3.10 -y
 conda activate cfd
@@ -20,6 +20,7 @@ conda activate cfd
 
 - Install for cuda 11.8
 ```sh
+conda install cudatoolkit=11.8 -y
 # torch2.0.0+cu118
 pip install torch==2.0.0+cu118 torchvision --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja # optional, speed up compilation
@@ -28,6 +29,7 @@ pip install -r requirements-118.txt
 
 - Install for cuda 12.1
 ```sh
+conda install nvidia/label/cuda-12.1.0::cuda-toolkit -y
 # torch2.2.1+cu121
 pip install torch==2.2.1+cu121 torchvision --extra-index-url https://download.pytorch.org/whl/cu121
 pip install ninja # optional, speed up compilation

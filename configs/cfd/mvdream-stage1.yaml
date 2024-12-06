@@ -10,7 +10,7 @@ data:
   # 0-4999: 64x64, >=5000: 256x256
   width: [64, 256]
   height: [64, 256]
-  resolution_milestones: [2_000]
+  resolution_milestones: [5_000]
 
   camera_distance_range: [0.8, 1.0] # relative
   fovy_range: [15, 60]
@@ -67,16 +67,16 @@ system:
     sqrt_beta: 1.0
     noise_h: 32
     noise_w: 32
-    noise_background_fix: true
+    noise_background_fix: false
 
     noise_ptc_resolution: 1024
     peel_depth: 32 # just some large number
-    separate: false
+    separate: true
     apply_transformation: sph2sqr
     context_type: cuda
 
     smooth_regularization: true
-    weight_decay: 0.9999
+    weight_decay: 0.0001
 
   t_scheduler_type: timestep-scheduler
   t_scheduler:
@@ -85,9 +85,9 @@ system:
     sqrt_anneal: false
     dreamtime_anneal: null
     trainer_max_steps: ${trainer.max_steps}
-    linear_anneal_max: [0, 0.3, 0.6, 0.8]
+    linear_anneal_max: [0, 0.4, 0.7]
     linear_anneal_min: ${system.t_scheduler.linear_anneal_max}
-    linear_anneal_steps: [0, 2_000, 5_000, 10_000]
+    linear_anneal_steps: [0, 5_000, 10_000]
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
@@ -116,7 +116,7 @@ system:
     lambda_sds: 1.
     lambda_sd_img: 0.
     lambda_orient: 0.
-    lambda_sparsity: 100.
+    lambda_sparsity: 0.
     lambda_opaque: 0.
     lambda_z_variance: 0.
 

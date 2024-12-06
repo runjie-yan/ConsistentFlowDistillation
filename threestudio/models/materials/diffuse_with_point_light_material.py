@@ -44,12 +44,13 @@ class DiffuseWithPointLightMaterial(BaseMaterial):
         self,
         features: Float[Tensor, "B ... Nf"],
         positions: Float[Tensor, "B ... 3"],
-        shading_normal: Float[Tensor, "B ... 3"],
         light_positions: Float[Tensor, "B ... 3"],
+        shading_normal: Float[Tensor, "B ... 3"] = None,
         ambient_ratio: Optional[float] = None,
         shading: Optional[str] = None,
         **kwargs,
-    ) -> Float[Tensor, "B ... 3"]:
+    ) -> Float[Tensor, "B ... 3"]: 
+        assert shading_normal is not None or not self.requires_normal
         albedo = get_activation(self.cfg.albedo_activation)(features[..., :3])
 
         if ambient_ratio is not None:
@@ -74,9 +75,12 @@ class DiffuseWithPointLightMaterial(BaseMaterial):
         light_directions: Float[Tensor, "B ... 3"] = F.normalize(
             light_positions - positions, dim=-1
         )
-        diffuse_light: Float[Tensor, "B ... 3"] = (
-            dot(shading_normal, light_directions).clamp(min=0.0) * diffuse_light_color
-        )
+        if shading_normal is None:
+            diffuse_light = diffuse_light_color
+        else:
+            diffuse_light: Float[Tensor, "B ... 3"] = (
+                dot(shading_normal, light_directions).clamp(min=0.0) * diffuse_light_color
+            )
         textureless_color = diffuse_light + ambient_light_color
         # clamp albedo to [0, 1] to compute shading
         color = albedo.clamp(0.0, 1.0) * textureless_color

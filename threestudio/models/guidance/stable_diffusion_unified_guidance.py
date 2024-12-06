@@ -97,6 +97,7 @@ class StableDiffusionUnifiedGuidance(BaseModule):
         sds_guidance_scale: float = 0.0
 
         vsd_blur: int = 0
+        recon_std_rescale: float = 0.
 
     cfg: Config
 
@@ -403,9 +404,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                         torch.cat([latents_noisy] * 4, dim=0),
                         torch.cat([t] * 4, dim=0),
                         encoder_hidden_states=text_embeddings,
-                        cross_attention_kwargs=(
-                            {"scale": 0.0} if self.vsd_share_model else None
-                        ),
+                        cross_attention_kwargs={"scale": 0.0}
+                        if self.vsd_share_model
+                        else None,
                         velocity_to_epsilon=self.pipe.scheduler.config.prediction_type
                         == "v_prediction",
                     )  # (4B, 3, Hl, Wl)
@@ -424,6 +425,13 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 ) * perpendicular_component(e_i_neg, e_pos)
 
             noise_pred = noise_pred_uncond + self.guidance_scale * (e_pos + accum_grad)
+            noise_pred_img = noise_pred_text + self.guidance_scale_img * (
+                e_pos + accum_grad
+            )
+            pretrain_pred_utils = {
+                "noise_pred_text": noise_pred_text,
+                "noise_pred_uncond": noise_pred_uncond,
+            }
         else:
             text_embeddings = prompt_utils.get_text_embeddings(
                 elevation, azimuth, camera_distances, self.cfg.view_dependent_prompting
@@ -435,9 +443,9 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                         torch.cat([latents_noisy] * 2, dim=0),
                         torch.cat([t] * 2, dim=0),
                         encoder_hidden_states=text_embeddings,
-                        cross_attention_kwargs=(
-                            {"scale": 0.0} if self.vsd_share_model else None
-                        ),
+                        cross_attention_kwargs={"scale": 0.0}
+                        if self.vsd_share_model
+                        else None,
                         velocity_to_epsilon=self.pipe.scheduler.config.prediction_type
                         == "v_prediction",
                     )
@@ -475,17 +483,15 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 torch.cat([latents_noisy] * 2, dim=0),
                 torch.cat([t] * 2, dim=0),
                 encoder_hidden_states=torch.cat([text_embeddings] * 2, dim=0),
-                class_labels=(
-                    torch.cat(
-                        [
-                            camera_condition.view(batch_size, -1),
-                            torch.zeros_like(camera_condition.view(batch_size, -1)),
-                        ],
-                        dim=0,
-                    )
-                    if self.cfg.vsd_use_camera_condition
-                    else None
-                ),
+                class_labels=torch.cat(
+                    [
+                        camera_condition.view(batch_size, -1),
+                        torch.zeros_like(camera_condition.view(batch_size, -1)),
+                    ],
+                    dim=0,
+                )
+                if self.cfg.vsd_use_camera_condition
+                else None,
                 cross_attention_kwargs={"scale": 1.0},
                 velocity_to_epsilon=self.pipe_phi.scheduler.config.prediction_type
                 == "v_prediction",
@@ -556,13 +562,11 @@ class StableDiffusionUnifiedGuidance(BaseModule):
             encoder_hidden_states=text_embeddings.repeat(
                 self.cfg.vsd_lora_n_timestamp_samples, 1, 1
             ),
-            class_labels=(
-                camera_condition.view(B, -1).repeat(
-                    self.cfg.vsd_lora_n_timestamp_samples, 1
-                )
-                if self.cfg.vsd_use_camera_condition
-                else None
-            ),
+            class_labels=camera_condition.view(B, -1).repeat(
+                self.cfg.vsd_lora_n_timestamp_samples, 1
+            )
+            if self.cfg.vsd_use_camera_condition
+            else None,
             cross_attention_kwargs={"scale": 1.0},
         )
         return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
@@ -638,8 +642,6 @@ class StableDiffusionUnifiedGuidance(BaseModule):
 
         if self.cfg.guidance_type in "sds":
             eps_phi = noise
-            if self.guidance_scale > 100.1:
-                eps_phi = pretrain_pred_utils["noise_pred_uncond"]
         elif self.cfg.guidance_type == "vsd":
             if self.cfg.vsd_camera_condition_type == "extrinsics":
                 camera_condition = c2w
@@ -681,29 +683,22 @@ class StableDiffusionUnifiedGuidance(BaseModule):
                 camera_condition,
             )
 
-        if self.cfg.consistency_training:
-            if self.cfg.ct_weighting_strategy == "gt":
-                w = self.lambdas[t_ref].view(-1, 1, 1, 1)
-            else:
-                w = ((self.lambdas[t_ref] - self.lambdas[t_tgt]) * self.w_factor).view(
-                    -1, 1, 1, 1
-                )
-        elif self.cfg.weighting_strategy == "dmd":
-            w = 1.0 / (
-                1e-8 + (eps_pretrain - noise).abs().mean(dim=[1, 2, 3], keepdim=True)
+        w = self.lambdas[t_ref].view(-1, 1, 1, 1)
+        
+        target = latents_ref - w * (eps_pretrain - eps_phi)
+        
+        if self.cfg.recon_std_rescale > 0.0:
+            target_nocfg = latents_ref - w * (pretrain_pred_utils["noise_pred_uncond"] - eps_phi)
+            factor = (
+                target_nocfg.std([1, 2, 3], keepdim=True) + 1e-8
+            ) / (target.std([1, 2, 3], keepdim=True) + 1e-8)
+            target_adjust = target.clone()
+            target = (
+                self.cfg.recon_std_rescale * target_adjust
+                + (1 - self.cfg.recon_std_rescale) * target
             )
-        elif self.cfg.weighting_strategy == "dreamfusion":
-            w = (1.0 - self.alphas[t_ref]).view(-1, 1, 1, 1)
-        elif self.cfg.weighting_strategy == "uniform":
-            w = 1.0
-        elif self.cfg.weighting_strategy == "fantasia3d":
-            w = (self.alphas[t_ref] ** 0.5 * (1 - self.alphas[t_ref])).view(-1, 1, 1, 1)
-        else:
-            raise ValueError(
-                f"Unknown weighting strategy: {self.cfg.weighting_strategy}"
-            )
-
-        grad = w * (eps_pretrain - eps_phi)
+        
+        grad = -(target - latents_ref)
 
         if self.grad_clip_val is not None:
             grad = grad.clamp(-self.grad_clip_val, self.grad_clip_val)

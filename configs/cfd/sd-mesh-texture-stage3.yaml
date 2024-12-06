@@ -63,13 +63,13 @@ system:
     noise_background_fix: true
 
     noise_ptc_resolution: 2048
-    peel_depth: 32 # just some large number
+    peel_depth: 4
     separate: false
     apply_transformation: sph2sqr
     context_type: cuda
 
     smooth_regularization: true
-    weight_decay: 0.9999
+    weight_decay: 0.0001
 
   t_scheduler_type: timestep-scheduler
   t_scheduler:
@@ -78,15 +78,15 @@ system:
     sqrt_anneal: false
     dreamtime_anneal: null
     trainer_max_steps: ${trainer.max_steps}
-    linear_anneal_max: [0.6, 0.8]
+    linear_anneal_max: [0.6, 0.75]
     linear_anneal_min: ${system.t_scheduler.linear_anneal_max}
-    linear_anneal_steps: [0, 15_000]
+    linear_anneal_steps: [0, 20_000]
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
     prompt: ???
-    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, ugly, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
+    negative_prompt: "oversmoothed, strong reflection, lack details, ugly, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
     front_threshold: 30.
     back_threshold: 30.
 
@@ -96,9 +96,8 @@ system:
     guidance_type: sds
     guidance_stab_type: null
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    guidance_scale: 75.
-    guidance_scale_img: 3.
-    use_img_loss: gt
+    guidance_scale: 50.
+    use_img_loss: null
 
   loggers:
     wandb:
@@ -113,26 +112,28 @@ system:
     lambda_sparsity: 0.
     lambda_opaque: 0.
     lambda_z_variance: 0.
+    lambda_normal_smooth: 0.
+    lambda_3d_normal_smooth: 0.
 
   optimizer:
     name: Adam
     args:
       betas: [0.9, 0.99]
-      eps: 1.e-8
+      eps: 1.e-15
     params:
       geometry.encoding:
-        lr: 1e-2
+        lr: 0.01
       geometry.feature_network:
-        lr: 1e-3
+        lr: 0.001
       geometry.sdf:
-        lr: 1e-4
+        lr: 0.0001
       geometry.deformation:
-        lr: 1e-4
+        lr: 0.0001
       background:
-        lr: 1e-3
+        lr: 0.001
 
 trainer:
-  max_steps: 15_000
+  max_steps: 20_000
   log_every_n_steps: 50
   num_sanity_val_steps: 0
   val_check_interval: 500

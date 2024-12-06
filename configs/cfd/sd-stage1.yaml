@@ -5,11 +5,10 @@ seed: 0
 
 data_type: "random-camera-datamodule"
 data:
-  batch_size: [1,1]
+  batch_size: [1, 1]
   width: [128, 512]
   height: [128, 512]
-  resolution_milestones:
-   - ${mul:0.1,${trainer.max_steps}}
+  resolution_milestones: [5_000]
 
   camera_distance_range: [1.3, 1.5]
   fovy_range: [40, 65]
@@ -21,6 +20,8 @@ data:
   camera_perturb: 0.
   center_perturb: 0.
   up_perturb: 0.
+
+  low_res_prob: 0.1
 
 system_type: "dreamfusion-system"
 system:
@@ -42,11 +43,14 @@ system:
       base_resolution: 16
       per_level_scale: 1.447269237440378 # max resolution 4096
 
-  material_type: "no-material"
+  material_type: "diffuse-with-point-light-material"
   material:
-    requires_normal: true
-    n_output_dims: 3
-    color_activation: sigmoid
+    ambient_only_steps: ${trainer.max_steps} # only acitvate when low res
+    textureless_prob: 0.5
+    ambient_light_color: [0.8, 0.8, 0.8]
+    diffuse_light_color: [0.2, 0.2, 0.2]
+    soft_shading: true
+    albedo_activation: sigmoid
 
   background_type: "neural-environment-map-background"
   background:
@@ -56,7 +60,6 @@ system:
   renderer_type: "nerf-volume-renderer-with-budget"
   renderer:
     return_comp_normal: true
-    return_normal_perturb: true
     radius: ${system.geometry.radius}
     num_samples_per_ray: 512
     train_gradient_budget: 13_000_000
@@ -71,13 +74,13 @@ system:
     noise_background_fix: true
 
     noise_ptc_resolution: 2048
-    peel_depth: 32 # just some large number
+    peel_depth: 4
     separate: false
     apply_transformation: sph2sqr
     context_type: cuda
 
     smooth_regularization: true
-    weight_decay: [2_500, 0.99, 0.9999, 5_000]
+    weight_decay: [5_000, 0.01, 0.0001, 10_000]
 
   t_scheduler_type: timestep-scheduler
   t_scheduler:
@@ -86,15 +89,15 @@ system:
     sqrt_anneal: false
     dreamtime_anneal: null
     trainer_max_steps: ${trainer.max_steps}
-    linear_anneal_max: [0, 0.3, 0.6, 0.8]
+    linear_anneal_max: [0, 0.3, 0.6, 0.80]
     linear_anneal_min: ${system.t_scheduler.linear_anneal_max}
     linear_anneal_steps: [0, 2_500, 12_500, 25_000]
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    prompt: ???
-    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, ugly, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
+    prompt: "A 3D model of an adorable cottage with a thatched roof"
+    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
     front_threshold: 30.
     back_threshold: 30.
 
@@ -104,9 +107,8 @@ system:
     guidance_type: sds
     guidance_stab_type: null
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    guidance_scale: 75.
-    guidance_scale_img: 3.
-    use_img_loss: gt
+    guidance_scale: 70.
+    use_img_loss: null
 
   loggers:
     wandb:
@@ -117,27 +119,27 @@ system:
   loss:
     lambda_sd: 1.
     lambda_sd_img: 1e-2
-    lambda_normal_smooth: [2_000, 1000., 0., 2_500]
-    lambda_3d_normal_smooth: [2_000, 1000., 0., 2_500]
+    lambda_normal_smooth: [5_000, 1000., 100., 25_000]
+    lambda_3d_normal_smooth: 0.
     lambda_orient: 0.
-    lambda_sparsity: 10.
+    lambda_sparsity: 0.
     lambda_opaque: 0.
-    lambda_z_variance: 100.
+    lambda_z_variance: 0.
 
   optimizer:
     name: Adam
     args:
       betas: [0.9, 0.99]
-      eps: 1.e-8
+      eps: 1.e-15
     params:
       geometry.encoding:
-        lr: 1e-2
+        lr: 0.01
       geometry.density_network:
-        lr: 1e-3
+        lr: 0.001
       geometry.feature_network:
-        lr: 1e-3
+        lr: 0.001
       background:
-        lr: 1e-3
+        lr: 0.001
 
 trainer:
   max_steps: 25_000

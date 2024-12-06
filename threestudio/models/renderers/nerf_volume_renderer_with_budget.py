@@ -354,6 +354,10 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
         comp_rgb_fg: Float[Tensor, "Nr Nc"] = nerfacc.accumulate_along_rays(
             weights[..., 0], values=rgb_fg_all, ray_indices=ray_indices, n_rays=n_rays
         )
+        comp_pos: Float[Tensor, "Nr Nc"] = nerfacc.accumulate_along_rays(
+            weights[..., 0], values=positions, ray_indices=ray_indices, n_rays=n_rays
+        )
+        comp_pos = (comp_pos + 1.0) / 2.0
 
         # populate depth and opacity to each point
         weights_normalized = weights / opacity.clamp(min=1e-5)[ray_indices]  # num_pts
@@ -378,6 +382,7 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
             "depth": depth,
             "z_mean": z_mean,
             "z_variance": z_variance,
+            "comp_pos": comp_pos,
         }
 
         if self.training:
@@ -402,11 +407,13 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                         n_rays=n_rays,
                     )
                     comp_normal = F.normalize(comp_normal, dim=-1)
+                    comp_normal_grey = (comp_normal + 1.0) / 2.0
                     comp_normal = (
                         (comp_normal + 1.0) / 2.0 * opacity
                     )  # for visualization
                     out.update(
                         {
+                            "comp_normal_grey": comp_normal_grey,
                             "comp_normal": comp_normal,
                         }
                     )
@@ -431,8 +438,10 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
                 )
                 comp_normal = F.normalize(comp_normal, dim=-1)
                 comp_normal = (comp_normal + 1.0) / 2.0 * opacity  # for visualization
+                comp_normal_grey = (comp_normal + 1.0) / 2.0
                 out.update(
                     {
+                        "comp_normal_grey": comp_normal_grey,
                         "comp_normal": comp_normal,
                     }
                 )
@@ -498,6 +507,10 @@ class NeRFVolumeRendererWithBudget(VolumeRenderer):
         out["z_variance"] = out["z_variance"].view(batch_size, height, width, 1)
         if "comp_normal" in out:
             out["comp_normal"] = out["comp_normal"].view(batch_size, height, width, 3)
+        if "comp_normal_grey" in out:
+            out["comp_normal_grey"] = out["comp_normal_grey"].view(batch_size, height, width, 3)
+        if "comp_pos" in out:
+            out["comp_pos"] = out["comp_pos"].view(batch_size, height, width, 3)
 
         return out
 

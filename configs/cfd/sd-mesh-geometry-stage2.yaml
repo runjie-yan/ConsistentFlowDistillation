@@ -71,7 +71,7 @@ system:
     guidance_type: sds
     guidance_stab_type: null
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    guidance_scale: 75.
+    guidance_scale: 50.
     use_img_loss: null
 
   loggers:

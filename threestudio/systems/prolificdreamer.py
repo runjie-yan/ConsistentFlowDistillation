@@ -13,6 +13,9 @@ from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
 from threestudio.utils.timer import freq_timer
 from threestudio.utils.typing import *
+from threestudio.models.materials.diffuse_with_point_light_material import (
+    DiffuseWithPointLightMaterial,
+)
 
 
 @threestudio.register("prolificdreamer-system")
@@ -22,7 +25,6 @@ class ProlificDreamer(BaseLift3DSystem):
         # in ['coarse', 'geometry', 'texture']
         stage: str = "coarse"
         enable_eval_metirc: bool = False
-        normal_as_rgb_prob: Any = 0.0
 
     cfg: Config
 
@@ -55,19 +57,29 @@ class ProlificDreamer(BaseLift3DSystem):
                 ),
             }
 
-    def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
-        self.normal_as_rgb_prob = self.C(self.cfg.normal_as_rgb_prob)
-
     def forward(self, batch: Dict[str, Any], vis=False) -> Dict[str, Any]:
+        coin_flip = random.random()
         if self.cfg.stage == "geometry":
             render_out = self.renderer(**batch, render_rgb=False)
+            if not vis:
+                if "comp_normal" in render_out:
+                    render_out["comp_rgb"] = render_out["comp_normal"]
+                else:
+                    threestudio.warn("do not found normal in render output")
         else:
+            enable_normal = not vis and batch["low_res_flag"]
+            if enable_normal:
+                if coin_flip < 0.5 and isinstance(
+                    self.material, DiffuseWithPointLightMaterial
+                ):
+                    self.material.ambient_only = False
+            self.material.requires_normal = vis or enable_normal
             render_out = self.renderer(**batch)
-        if not vis and random.random() < self.normal_as_rgb_prob:
-            if "comp_normal" in render_out:
-                render_out["comp_rgb"] = render_out["comp_normal"]
-            else:
-                threestudio.warn("do not found normal in render output")
+            if enable_normal:
+                if 0.5 <= coin_flip < 0.95:
+                    render_out["comp_rgb"] = render_out["comp_normal"]
+                elif 0.95 <= coin_flip:
+                    render_out["comp_rgb"] = render_out["comp_pos"]
         return {
             **render_out,
         }
@@ -160,7 +172,29 @@ class ProlificDreamer(BaseLift3DSystem):
                     self.cfg.loss.lambda_laplacian_smoothness
                 )
         elif self.cfg.stage == "texture":
-            pass
+            if self.C(self.cfg.loss.lambda_normal_smooth) > 0.0 and "comp_normal" in out:
+                normal = out["comp_normal"]
+                loss += (
+                    (normal[:, 1:, :, :] - normal[:, :-1, :, :]).square().mean()
+                    + (normal[:, :, 1:, :] - normal[:, :, :-1, :]).square().mean()
+                ) * self.C(self.cfg.loss.lambda_normal_smooth)
+            if (
+                self.C(self.cfg.loss.lambda_3d_normal_smooth) > 0.0
+                and batch["low_res_flag"]
+            ):
+                if "normal" not in out:
+                    raise ValueError(
+                        "Normal is required for normal smooth loss, no normal is found in the output."
+                    )
+                if "normal_perturb" not in out:
+                    raise ValueError(
+                        "normal_perturb is required for normal smooth loss, no normal_perturb is found in the output."
+                    )
+                normals = out["normal"]
+                normals_perturb = out["normal_perturb"]
+                loss += (normals - normals_perturb).abs().mean() * self.C(
+                    self.cfg.loss.lambda_3d_normal_smooth
+                )
         else:
             raise ValueError(f"Unknown stage {self.cfg.stage}")
 
@@ -205,11 +239,9 @@ class ProlificDreamer(BaseLift3DSystem):
                     )
 
         self.save_image_grid(
-            (
-                f"train/it{self.true_global_step}-{batch['index'][0]}.png"
-                if not batch["index"][0] == 0
-                else f"train-video/{self.true_global_step}.png"
-            ),
+            f"train/it{self.true_global_step}-{batch['index'][0]}.png"
+            if not batch["index"][0] == 0
+            else f"train-video/{self.true_global_step}.png",
             (
                 [
                     {
@@ -403,7 +435,7 @@ class ProlificDreamer(BaseLift3DSystem):
                         "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]
-                if "comp_normal" in out and self.cfg.stage != "texture"
+                if "comp_normal" in out
                 else []
             )
             + (

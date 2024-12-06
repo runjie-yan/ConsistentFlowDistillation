@@ -36,17 +36,17 @@ system:
     trainer_max_steps: ${trainer.max_steps}
     linear_anneal_max: [0.,1.0]
     linear_anneal_min: [0.,1.0]
-    linear_anneal_steps: [0,500]
+    linear_anneal_steps: [0,1000]
 
   noise_generator_type: "noise-generator"
   noise_generator:
     sqrt_beta: 1.0
-    weight_decay: 1.0
+    weight_decay: 0.0
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    prompt: ???
+    prompt: "a cute cat"
     negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, ugly, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
 
   guidance_type: "stable-diffusion-unified-guidance"
@@ -84,7 +84,7 @@ system:
         lr: 1e-4
 
 trainer:
-  max_steps: 500
+  max_steps: 1000
   log_every_n_steps: 20
   num_sanity_val_steps: 0
   val_check_interval: 50

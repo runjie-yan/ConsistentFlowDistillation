@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 import threestudio
 from threestudio import register
-from threestudio.utils.base import BaseObject, Updateable
+from threestudio.utils.base import BaseObject
 from threestudio.utils.config import parse_structured
 from threestudio.utils.misc import get_device
 from threestudio.utils.ops import (
@@ -59,6 +59,10 @@ class RandomCameraDataModuleConfig:
     rays_d_normalize: bool = True
 
     quantize: int = 0
+
+    low_res_prob: float = 0.0
+    low_res_height: int = 128
+    low_res_width: int = 128
 
 
 class RandomCameraIterableDataset(BaseObject, IterableDataset):
@@ -108,11 +112,18 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
         self.azimuth_range = self.cfg.azimuth_range
         self.camera_distance_range = self.cfg.camera_distance_range
         self.fovy_range = self.cfg.fovy_range
+        self.low_res_flag = False
 
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
         size_ind = bisect.bisect_right(self.resolution_milestones, global_step) - 1
-        self.height = self.heights[size_ind]
-        self.width = self.widths[size_ind]
+        if random.random() < self.cfg.low_res_prob:
+            self.low_res_flag = True
+            self.height = self.cfg.low_res_height
+            self.width = self.cfg.low_res_width
+        else:
+            self.low_res_flag = False
+            self.height = self.heights[size_ind]
+            self.width = self.widths[size_ind]
         self.batch_size = self.batch_sizes[size_ind]
         self.directions_unit_focal = self.directions_unit_focals[size_ind]
         threestudio.debug(
@@ -370,6 +381,7 @@ class RandomCameraIterableDataset(BaseObject, IterableDataset):
         self.fovy = fovy
 
         return {
+            "low_res_flag": self.low_res_flag,
             "rays_o": rays_o,
             "rays_d": rays_d,
             "mvp_mtx": mvp_mtx,
@@ -495,6 +507,7 @@ class RandomCameraDataset(BaseObject, Dataset):
 
     def __getitem__(self, index):
         return {
+            "low_res_flag": False,
             "index": index,
             "rays_o": self.rays_o[index],
             "rays_d": self.rays_d[index],

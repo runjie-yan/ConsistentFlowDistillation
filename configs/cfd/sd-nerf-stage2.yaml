@@ -8,10 +8,10 @@ data:
   batch_size: 1
   width: 512
   height: 512
-  eval_height: 1024
-  eval_width: 1024
+  eval_height: 512
+  eval_width: 512
   camera_distance_range: [1.5, 1.8]
-  fovy_range: [60, 70]
+  fovy_range: [55, 65]
   elevation_range: [0, 40]
   eval_camera_distance: 1.8
   eval_fovy_deg: 65.
@@ -21,9 +21,10 @@ data:
   center_perturb: 0.
   up_perturb: 0.
 
+  low_res_prob: 0.2
+
 system_type: "prolificdreamer-system"
 system:
-  normal_as_rgb_prob: 0.1
   stage: texture
   geometry_convert_from: ???
   geometry_convert_inherit_texture: true
@@ -45,11 +46,14 @@ system:
       base_resolution: 16
       per_level_scale: 1.447269237440378 # max resolution 4096
 
-  material_type: "no-material"
+  material_type: "diffuse-with-point-light-material"
   material:
-    requires_normal: true
-    n_output_dims: 3
-    color_activation: sigmoid
+    ambient_only_steps: ${trainer.max_steps} # only acitvate when low res
+    textureless_prob: 0.5
+    ambient_light_color: [0.8, 0.8, 0.8]
+    diffuse_light_color: [0.2, 0.2, 0.2]
+    soft_shading: true
+    albedo_activation: sigmoid
 
   background_type: "neural-environment-map-background"
   background:
@@ -73,13 +77,13 @@ system:
     noise_background_fix: true
 
     noise_ptc_resolution: 2048
-    peel_depth: 32 # just some large number
-    separate: false
+    peel_depth: 4
+    separate: true
     apply_transformation: sph2sqr
     context_type: cuda
 
     smooth_regularization: true
-    weight_decay: 0.9999
+    weight_decay: 0.0001
 
   t_scheduler_type: timestep-scheduler
   t_scheduler:
@@ -90,13 +94,13 @@ system:
     trainer_max_steps: ${trainer.max_steps}
     linear_anneal_max: [0.6, 0.8]
     linear_anneal_min: ${system.t_scheduler.linear_anneal_max}
-    linear_anneal_steps: [0, 15_000]
+    linear_anneal_steps: [0, 20_000]
 
   prompt_processor_type: "stable-diffusion-prompt-processor"
   prompt_processor:
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
     prompt: ???
-    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, ugly, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
+    negative_prompt: "lack details, ugly, oversmoothed, bad structure, out of focus, blurry, cartoon, oversaturated, foggy, hazy, bad anatomy, malformed, pixelated obscure, unnatural colors, dull, unclear, lowres, low quality, deformed, dehydrated"
     front_threshold: 30.
     back_threshold: 30.
 
@@ -106,9 +110,8 @@ system:
     guidance_type: sds
     guidance_stab_type: null
     pretrained_model_name_or_path: "stabilityai/stable-diffusion-2-1-base"
-    guidance_scale: 75.
-    guidance_scale_img: 3.
-    use_img_loss: gt
+    guidance_scale: 70.
+    use_img_loss: null
 
   loggers:
     wandb:
@@ -121,6 +124,8 @@ system:
     lambda_sd_img: 1e-2
     lambda_orient: 0.
     lambda_sparsity: 0.
+    lambda_normal_smooth: 1000.
+    lambda_3d_normal_smooth: 0.
     lambda_opaque: 0.
     lambda_z_variance: 10.
 
@@ -128,19 +133,19 @@ system:
     name: Adam
     args:
       betas: [0.9, 0.99]
-      eps: 1.e-8
+      eps: 1.e-15
     params:
       geometry.encoding:
-        lr: 1e-2
+        lr: 0.01
       geometry.density_network:
-        lr: 1e-3
+        lr: 0.001
       geometry.feature_network:
-        lr: 1e-3
+        lr: 0.001
       background:
-        lr: 1e-3
+        lr: 0.001
 
 trainer:
-  max_steps: 15_000
+  max_steps: 20_000
   log_every_n_steps: 50
   num_sanity_val_steps: 0
   val_check_interval: 500

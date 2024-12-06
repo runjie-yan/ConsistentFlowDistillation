@@ -8,6 +8,9 @@ import torch.optim as optim
 
 import threestudio
 from threestudio.models.geometry.base import BaseImplicitGeometryGenerator
+from threestudio.models.materials.diffuse_with_point_light_material import (
+    DiffuseWithPointLightMaterial,
+)
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
 from threestudio.utils.timer import freq_timer
@@ -20,7 +23,6 @@ class DreamFusion(BaseLift3DSystem):
     class Config(BaseLift3DSystem.Config):
         rgb_as_latents: bool = False
         enable_eval_metirc: bool = False
-        normal_as_rgb_prob: Any = 0.0
 
     cfg: Config
 
@@ -53,16 +55,21 @@ class DreamFusion(BaseLift3DSystem):
                 ),
             }
 
-    def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
-        self.normal_as_rgb_prob = self.C(self.cfg.normal_as_rgb_prob)
-
     def forward(self, batch: Dict[str, Any], vis=False) -> Dict[str, Any]:
+        coin_flip = random.random()
+        enable_normal = not vis and batch["low_res_flag"]
+        if enable_normal:
+            if coin_flip < 0.5 and isinstance(
+                self.material, DiffuseWithPointLightMaterial
+            ):
+                self.material.ambient_only = False
+        self.material.requires_normal = enable_normal or batch['rays_o'].shape[1] < 512
         render_out = self.renderer(**batch)
-        if not vis and random.random() < self.normal_as_rgb_prob:
-            if "comp_normal" in render_out:
+        if enable_normal:
+            if 0.5 <= coin_flip < 0.95:
                 render_out["comp_rgb"] = render_out["comp_normal"]
-            else:
-                threestudio.warn("do not found normal in render output")
+            elif 0.95 <= coin_flip:
+                render_out["comp_rgb"] = render_out["comp_pos"]
         if vis and self.cfg.rgb_as_latents:
             render_out["comp_rgb"] = self.guidance.vae_decode(
                 self.guidance.pipe.vae, render_out["comp_rgb"].permute(0, 3, 1, 2)
@@ -75,9 +82,6 @@ class DreamFusion(BaseLift3DSystem):
         super().on_fit_start()
 
     def training_step(self, batch, batch_idx):
-        if self.C(self.cfg.loss.lambda_normal_smooth) <= 0:
-            self.material.requires_normal = False
-
         # set identity
         if isinstance(self.geometry, BaseImplicitGeometryGenerator):
             self.geometry.regenerate()
@@ -133,18 +137,16 @@ class DreamFusion(BaseLift3DSystem):
             self.log("train/loss_z_variance", loss_z_variance)
             loss += loss_z_variance * self.C(self.cfg.loss.lambda_z_variance)
 
-        if self.C(self.cfg.loss.lambda_normal_smooth) > 0:
-            if "comp_normal" not in out:
-                print(self.geometry.cfg.normal_type, self.material.requires_normal)
-                raise ValueError(
-                    "comp_normal is required for 2D normal smooth loss, no comp_normal is found in the output."
-                )
+        if self.C(self.cfg.loss.lambda_normal_smooth) > 0.0 and "comp_normal" in out:
             normal = out["comp_normal"]
             loss += (
                 (normal[:, 1:, :, :] - normal[:, :-1, :, :]).square().mean()
                 + (normal[:, :, 1:, :] - normal[:, :, :-1, :]).square().mean()
             ) * self.C(self.cfg.loss.lambda_normal_smooth)
-        if self.C(self.cfg.loss.lambda_3d_normal_smooth) > 0:
+        if (
+            self.C(self.cfg.loss.lambda_3d_normal_smooth) > 0.0
+            and batch["low_res_flag"]
+        ):
             if "normal" not in out:
                 raise ValueError(
                     "Normal is required for normal smooth loss, no normal is found in the output."
@@ -158,6 +160,23 @@ class DreamFusion(BaseLift3DSystem):
             loss += (normals - normals_perturb).abs().mean() * self.C(
                 self.cfg.loss.lambda_3d_normal_smooth
             )
+
+        # self.save_image_grid(
+        #     f"train/it{self.true_global_step}.png",
+        #     (
+        #         [
+        #             {
+        #                 "type": "rgb",
+        #                 "img": out["comp_rgb"][0],
+        #                 "kwargs": {"data_format": "HWC"},
+        #             },
+        #         ]
+        #         if "comp_rgb" in out
+        #         else []
+        #     ),
+        #     name=f"train_step",
+        #     step=self.true_global_step,
+        # )
 
         if loss.isnan():
             threestudio.warn("loss is NaN, stop running")
@@ -175,6 +194,7 @@ class DreamFusion(BaseLift3DSystem):
             self.geometry.regenerate()
         out = self(batch, vis=True)
         noise_out = self.noise_generator(out, batch)
+        # grad_weight = self.grad_weighter(out, batch)
         schedule_out = self.t_scheduler(out["comp_rgb"].shape[0])
         guidance_out = self.guidance(
             out["comp_rgb"],
@@ -196,11 +216,9 @@ class DreamFusion(BaseLift3DSystem):
                     )
 
         self.save_image_grid(
-            (
-                f"train/it{self.true_global_step}-{batch['index'][0]}.png"
-                if not batch["index"][0] == 0
-                else f"train-video/{self.true_global_step}.png"
-            ),
+            f"train/it{self.true_global_step}-{batch['index'][0]}.png"
+            if not batch["index"][0] == 0
+            else f"train-video/{self.true_global_step}.png",
             (
                 [
                     {
@@ -317,6 +335,7 @@ class DreamFusion(BaseLift3DSystem):
         self.t_scheduler.set_min_max_steps(0.4, 0.4)
         out = self(batch, vis=True)
         noise_out = self.noise_generator(out, batch)
+        # grad_weight = self.grad_weighter(out, batch)
         schedule_out = self.t_scheduler(out["comp_rgb"].shape[0])
         try:
             guidance_out = self.guidance(
@@ -398,7 +417,7 @@ class DreamFusion(BaseLift3DSystem):
                 ]
                 if "comp_normal" in out
                 else []
-            )
+            )  # comp_pos
             + (
                 [
                     {
@@ -431,7 +450,6 @@ class DreamFusion(BaseLift3DSystem):
         )
 
     def on_test_epoch_end(self):
-        # threestudio.info(self.noise_generator.profiler.summary())
         if self.cfg.enable_eval_metirc:
             for mtc_name, metirc in self.metrics.items():
                 self.metrics[mtc_name] = metirc.cpu()

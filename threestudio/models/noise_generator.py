@@ -28,8 +28,8 @@ class NoiseGenerator(BaseModule):
         noise_h: int = 64
         noise_w: int = 64
         noise_c: int = 4
-        # weight_decay = sqrt(1-gamma), corresponds to SDE guidance
-        weight_decay: Any = 1.0
+        # weight_decay = gamma, corresponds to SDE guidance
+        weight_decay: Any = 0.0
 
     cfg: Config
 
@@ -119,13 +119,12 @@ class NoiseGenerator(BaseModule):
         self.weight_decay = C(self.cfg.weight_decay, epoch, global_step)
         if self.training:
             self.noise_background.data = (
-                self.noise_background.data * self.weight_decay
+                self.noise_background.data * (1-self.weight_decay) ** 0.5
                 + torch.randn_like(self.noise_background.data)
-                * (1.0 - self.weight_decay**2) ** 0.5
+                * self.weight_decay ** 0.5
             )
 
 
-# FSD noise
 @threestudio.register("worldmap-noise-generator")
 class WorldmapNoiseGenerator(NoiseGenerator):
     @dataclass
@@ -201,9 +200,21 @@ class WorldmapNoiseGenerator(NoiseGenerator):
         else:
             det_mask[mask] = False
         return noise, det_mask, {}
+    
+    def update_step(
+        self, epoch: int, global_step: int, on_load_weights: bool = False
+    ) -> None:
+        super().update_step(epoch, global_step, on_load_weights)
+        if self.training:
+            # SDE noise injection
+            self.noise_buffer.data = (
+                self.noise_buffer.data
+                * (1.0 - self.weight_decay) ** 0.5
+                + torch.randn_like(self.noise_buffer.data)
+                * self.weight_decay ** 0.5
+            )
 
 
-# only for development/demonstration purpose
 @threestudio.register("dev-noise-generator")
 class DevNoiseGenerator(NoiseGenerator):
     @dataclass
@@ -339,6 +350,7 @@ class TriplaneNoiseGenerator(NoiseGenerator):
         self.kernel_size = 1
 
         # sph warm up (regularize shape)
+        # not used
         self.sph_warmup = False
         super().configure()
 
@@ -367,7 +379,10 @@ class TriplaneNoiseGenerator(NoiseGenerator):
             det_mask = torch.ones_like(noise_).bool()
         else:
             noise_: Float[Tensor, "H W C"] = torch.randn(
-                self.cfg.noise_h, self.cfg.noise_w, self.cfg.noise_c, device=self.device
+                self.cfg.noise_h,
+                self.cfg.noise_w,
+                self.cfg.noise_c,
+                device=self.device,
             )
             det_mask = torch.zeros_like(noise_).bool()
 
@@ -436,7 +451,9 @@ class TriplaneNoiseGenerator(NoiseGenerator):
 
             point_mean_BCHW = mean_pool_pix(point_pix_BCHW)
             area_BCHW = mean_pool_pix(mask_pix_BCHW.float())
-            opacity_BCHW: Float[Tensor, "1 1 H+1 W+1"] = mean_pool_pix(opacity_pix_BCHW)
+            opacity_BCHW: Float[Tensor, "1 1 H+1 W+1"] = mean_pool_pix(
+                opacity_pix_BCHW
+            )
             point_mean_BCHW = torch.nan_to_num(point_mean_BCHW / area_BCHW)
 
             corner_opacity: Float[Tensor, "(H+1)(W+1) 1"] = opacity_BCHW.permute(
@@ -617,6 +634,12 @@ class TriplaneNoiseGenerator(NoiseGenerator):
                 else:
                     sp_mask: Bool[Tensor, "Nm"] = torch.ones_like(sp_mask).bool()
 
+                noise_map_val = self.noise_ptc_val[noise_idx].flatten(
+                    start_dim=0, end_dim=-2
+                )
+                # call cfg can waste a lot of time
+                noise_c_ = self.cfg.noise_c
+
                 # map points to triplane (multi-layers are considered)
                 with dr.DepthPeeler(
                     self.ctx.ctx,
@@ -637,35 +660,34 @@ class TriplaneNoiseGenerator(NoiseGenerator):
                             # all faces are rasterized
                             break
 
-                        # DEBUG
-                        if pi == 0 and self.cfg.debug:
-                            from time import time
+                        # # DEBUG
+                        # if pi == 0 and self.cfg.debug:
+                        #     from time import time
 
-                            import matplotlib.pyplot as plt
-                            import numpy as np
+                        #     import matplotlib.pyplot as plt
+                        #     import numpy as np
 
-                            debug_face_map = face_map.cpu().numpy()
-                            debug_num = debug_face_map.max()
-                            debug_colormap = plt.cm.get_cmap("tab20", debug_num)
-                            debug_colored_image = debug_colormap(debug_face_map)
-                            plt.imshow(debug_colored_image)
-                            plt.axis("off")
-                            plt.savefig(f"outputs/debug/{time()}.png", dpi=500)
-                            plt.close()
+                        #     debug_face_map = face_map.cpu().numpy()
+                        #     debug_num = debug_face_map.max()
+                        #     debug_colormap = plt.cm.get_cmap("tab20", debug_num)
+                        #     debug_colored_image = debug_colormap(debug_face_map)
+                        #     plt.imshow(debug_colored_image)
+                        #     plt.axis("off")
+                        #     plt.savefig(f"outputs/debug/{time()}.png", dpi=500)
+                        #     plt.close()
 
-                        flat_face_map = face_map.flatten()
+                        flat_face_map = face_map.view(-1)
                         valid_face_mask = flat_face_map != 0
                         valid_face_map = (
                             flat_face_map[valid_face_mask] - 1
                         )  # remove 1 offset
+
                         index_1d = valid_face_map
-                        index_2d = valid_face_map[:, None].repeat(1, self.cfg.noise_c)
+                        index_2d = valid_face_map.unsqueeze(1).expand(-1, noise_c_)
 
                         # Compute src tensors
                         src_1d = torch.ones_like(valid_face_map, dtype=torch.float)
-                        src_2d = self.noise_ptc_val[noise_idx].flatten(
-                            start_dim=0, end_dim=-2
-                        )[valid_face_mask]
+                        src_2d = noise_map_val[valid_face_mask]
 
                         # Compute scatter_reduce operations
                         area_count_sub[sp_mask] = area_count_sub[
@@ -732,12 +754,14 @@ class TriplaneNoiseGenerator(NoiseGenerator):
         if self.training:
             # SDE noise injection
             self.noise_background.data = (
-                self.noise_background.data * self.weight_decay
+                self.noise_background.data
+                * (1.0 - self.weight_decay) ** 0.5
                 + torch.randn_like(self.noise_background.data)
-                * (1.0 - self.weight_decay**2) ** 0.5
+                * self.weight_decay ** 0.5
             )
             self.noise_ptc_val.data = (
-                self.noise_ptc_val.data * self.weight_decay
+                self.noise_ptc_val.data
+                * (1.0 - self.weight_decay) ** 0.5
                 + torch.randn_like(self.noise_ptc_val.data)
-                * (1.0 - self.weight_decay**2) ** 0.5
+                * self.weight_decay ** 0.5
             )

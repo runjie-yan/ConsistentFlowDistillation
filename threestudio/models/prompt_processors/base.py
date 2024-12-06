@@ -210,6 +210,8 @@ class PromptProcessor(BaseObject):
         pretrained_model_name_or_path_prompt_debiasing: str = "bert-base-uncased"
         # index of words that can potentially be removed
         prompt_debiasing_mask_ids: Optional[List[int]] = None
+        
+        cache_dir: str = ".threestudio_cache/text_embeddings"
 
     cfg: Config
 
@@ -222,7 +224,7 @@ class PromptProcessor(BaseObject):
         raise NotImplementedError
 
     def configure(self) -> None:
-        self._cache_dir = ".threestudio_cache/text_embeddings"  # FIXME: hard-coded path
+        self._cache_dir = self.cfg.cache_dir  # FIXME: hard-coded path
 
         # view-dependent text embeddings
         self.directions: List[DirectionConfig]

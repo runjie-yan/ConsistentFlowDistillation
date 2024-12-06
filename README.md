@@ -4,15 +4,15 @@ Official Implementation for Consistent Flow Distillation for Text-to-3D Generati
 [project page](https://runjie-yan.github.io/cfd/) | paper
 
 <div style="display: flex; justify-content: space-between;">
-  <img src="./load/cfd_teaser/ship.png" alt="ship" width="33%">
-  <img src="./load/cfd_teaser/cat.png" alt="cat" width="33%">
-  <img src="./load/cfd_teaser/spacestation.png" alt="spacestation" width="33%">
+  <img src="./load/cfd_teaser/ship.png" alt="ship" width="30%">
+  <img src="./load/cfd_teaser/cat.png" alt="cat" width="30%">
+  <img src="./load/cfd_teaser/spacestation.png" alt="spacestation" width="30%">
 </div>
 <br>
 <div style="display: flex; justify-content: space-between;">
-  <img src="./load/cfd_teaser/horse.png" alt="ship" width="33%">
-  <img src="./load/cfd_teaser/pole.png" alt="cat" width="33%">
-  <img src="./load/cfd_teaser/owl.png" alt="spacestation" width="33%">
+  <img src="./load/cfd_teaser/horse.png" alt="ship" width="30%">
+  <img src="./load/cfd_teaser/pole.png" alt="cat" width="30%">
+  <img src="./load/cfd_teaser/owl.png" alt="spacestation" width="30%">
 </div>
 
 The code is built upon [threestudio](https://github.com/threestudio-project/threestudio)

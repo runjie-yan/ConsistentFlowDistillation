@@ -71,7 +71,6 @@ system:
 
     noise_ptc_resolution: 1024
     peel_depth: 32 # just some large number
-    separate: true
     apply_transformation: sph2sqr
     context_type: cuda
 

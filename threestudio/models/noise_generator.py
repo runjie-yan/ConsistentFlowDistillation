@@ -294,7 +294,7 @@ class TriplaneNoiseGenerator(NoiseGenerator):
     class Config(NoiseGenerator.Config):
         radius: float = 1.0
         noise_background_fix: bool = True
-        separate: bool = False
+        separate: bool = True
         apply_transformation: Optional[str] = None
 
         opc_thres: float = 0.1
@@ -308,7 +308,7 @@ class TriplaneNoiseGenerator(NoiseGenerator):
 
         smooth_regularization: bool = False
 
-        half: bool = True
+        half: bool = False
 
     cfg: Config
 

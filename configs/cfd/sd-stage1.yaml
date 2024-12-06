@@ -75,7 +75,6 @@ system:
 
     noise_ptc_resolution: 2048
     peel_depth: 4
-    separate: false
     apply_transformation: sph2sqr
     context_type: cuda
 

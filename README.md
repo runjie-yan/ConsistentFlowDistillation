@@ -20,8 +20,8 @@ The code is built upon [threestudio](https://github.com/threestudio-project/thre
 ## Installation
 - Create a virtual environment:
 ```sh
-conda deactivate
-conda remove -n cfd --all -y
+# conda deactivate
+# conda remove -n cfd --all -y
 conda create -n cfd python=3.10 -y
 conda activate cfd
 ```

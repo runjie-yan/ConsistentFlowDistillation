@@ -1,7 +1,7 @@
 # Consistent Flow Distillation
 Official Implementation for Consistent Flow Distillation for Text-to-3D Generation
 
-[project page](https://runjie-yan.github.io/cfd/) | paper
+[project page](https://runjie-yan.github.io/cfd/) | [paper](https://arxiv.org/abs/2501.05445)
 
 <div style="display: flex; justify-content: space-between;">
   <img src="./load/cfd_teaser/ship.png" alt="ship" width="30%">
@@ -77,3 +77,14 @@ python launch.py --train --gpu 0 --config configs/cfd/2d.yaml system.prompt_proc
 
 ## Citing CFD
 If you find CFD helpful, please consider citing:
+```
+@misc{yan2025consistentflowdistillationtextto3d,
+      title={Consistent Flow Distillation for Text-to-3D Generation}, 
+      author={Runjie Yan and Yinbo Chen and Xiaolong Wang},
+      year={2025},
+      eprint={2501.05445},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2501.05445}, 
+}
+```

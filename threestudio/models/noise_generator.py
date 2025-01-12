@@ -308,7 +308,7 @@ class TriplaneNoiseGenerator(NoiseGenerator):
 
         smooth_regularization: bool = False
 
-        half: bool = False
+        half: bool = False # not used
 
     cfg: Config
 
@@ -340,6 +340,7 @@ class TriplaneNoiseGenerator(NoiseGenerator):
         self.noise_ptc_val = nn.Parameter(
             torch.randn(
                 6,
+                self.cfg.peel_depth,
                 self.cfg.noise_ptc_resolution,
                 self.cfg.noise_ptc_resolution,
                 self.cfg.noise_c,
@@ -564,21 +565,22 @@ class TriplaneNoiseGenerator(NoiseGenerator):
                 [+1, -1] * 3,
                 range(6),
             ):
-                if self.cfg.half and noise_idx % 2 == 1:
-                    continue
+                # if self.cfg.half and noise_idx % 2 == 1:
+                #     continue
                 # change to homocoordinate
                 pts_xyz = pts[:, pmu]
-                pts_xyz[:, 2] = sgn * pts_xyz[:, 2]
                 pts_xyz: Float[Tensor, "(H+1)(W+1) 3"]
 
                 # IMPORTANT: apply some manifold transformation
                 if self.cfg.apply_transformation is not None:
                     if self.cfg.apply_transformation == "sph2sqr":
+                        # pts_xyz[:, 2] = sgn * pts_xyz[:, 2]
                         pts_theta = torch.atan2(
                             torch.sqrt(pts_xyz[:, 0] ** 2 + pts_xyz[:, 1] ** 2),
                             pts_xyz[:, 2].abs(),
                         )
                         pts_phi = torch.atan2(pts_xyz[:, 0], pts_xyz[:, 1])
+                        pts_r = sgn * torch.sqrt(pts_xyz[:, 0] ** 2 + pts_xyz[:, 1] ** 2 + pts_xyz[:, 2] ** 2)
                         sph2sqr_mask_0 = torch.logical_and(
                             pts_phi > 0.0, pts_phi <= torch.pi / 2
                         )
@@ -617,6 +619,8 @@ class TriplaneNoiseGenerator(NoiseGenerator):
                             - 1.0
                         )
                         pts_xyz[sph2sqr_mask_3, 1] = -sph2sqr_d[sph2sqr_mask_3]
+                        
+                        pts_xyz[:,2] = pts_r
                     else:
                         raise ValueError
                 # IMPORTANT: apply some manifold transformation
@@ -624,30 +628,36 @@ class TriplaneNoiseGenerator(NoiseGenerator):
                 pts_homo: Float[Tensor, "(H+1)(W+1) 4"] = torch.cat(
                     [pts_xyz, torch.ones_like(pts_xyz[:, :1])], dim=-1
                 )
-                # cfg.sperate: ignore back layer to avoid potential inconsistency
-                sp_mask: Bool[Tensor, "Nm"] = (pts_homo[:, 2][faces[mask]] < 0).all(
-                    dim=-1
-                )
-                if self.cfg.separate:
-                    if not sp_mask.any():
-                        continue
-                else:
-                    sp_mask: Bool[Tensor, "Nm"] = torch.ones_like(sp_mask).bool()
+                PN = self.cfg.peel_depth
+                for peel_i in range(self.cfg.peel_depth):
+                    if peel_i == PN-1:
+                        sp_mask: Bool[Tensor, "Nm"] = (pts_homo[:, 2][faces[mask]].abs() > (PN-1)/PN).all(dim=-1)
+                    else:
+                        sp_mask: Bool[Tensor, "Nm"] = torch.logical_and(
+                            (pts_homo[:, 2][faces[mask]].abs() > peel_i/PN).all(dim=-1),
+                            (pts_homo[:, 2][faces[mask]].abs() <= (peel_i+1)/PN).all(dim=-1),
+                        )
+                        
+                    if self.cfg.separate:
+                        if not sp_mask.any():
+                            # skip empty layer
+                            continue
+                    else:
+                        sp_mask: Bool[Tensor, "Nm"] = torch.ones_like(sp_mask).bool()
 
-                noise_map_val = self.noise_ptc_val[noise_idx].flatten(
-                    start_dim=0, end_dim=-2
-                )
-                # call cfg can waste a lot of time
-                noise_c_ = self.cfg.noise_c
+                    noise_map_val = self.noise_ptc_val[noise_idx][peel_i].flatten(
+                        start_dim=0, end_dim=-2
+                    )
+                    # call cfg can waste a lot of time
+                    noise_c_ = self.cfg.noise_c
 
-                # map points to triplane (multi-layers are considered)
-                with dr.DepthPeeler(
-                    self.ctx.ctx,
-                    pts_homo[None],
-                    faces[mask][sp_mask].int(),
-                    (self.cfg.noise_ptc_resolution, self.cfg.noise_ptc_resolution),
-                ) as peeler:
-                    for pi in range(self.cfg.peel_depth):
+                    # map points to triplane (multi-layers are considered)
+                    with dr.DepthPeeler(
+                        self.ctx.ctx,
+                        pts_homo[None],
+                        faces[mask][sp_mask].int(),
+                        (self.cfg.noise_ptc_resolution, self.cfg.noise_ptc_resolution),
+                    ) as peeler:
                         try:
                             rast, _ = peeler.rasterize_next_layer()
                         except RuntimeError:

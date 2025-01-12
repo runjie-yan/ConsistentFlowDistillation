@@ -70,7 +70,7 @@ system:
     noise_background_fix: false
 
     noise_ptc_resolution: 1024
-    peel_depth: 32 # just some large number
+    peel_depth: 4
     apply_transformation: sph2sqr
     context_type: cuda
 
